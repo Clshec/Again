@@ -41,18 +41,11 @@ Android APKs are published to every release, and [Obtainium](https://obtainium.i
 1. Install [Obtainium](https://github.com/ImranR98/Obtainium/releases/latest).
 2. Tap **Add to Obtainium** above. Stable opens the **Add App** page prefilled with `https://github.com/TomOdellSheetMusic/HandyCam`; nightly opens an import prompt, since it carries the prerelease and version-tracking settings the rolling `nightly` tag needs.
 
-### Relevant variables and switching between Nightly and Stable
-
-Relevant variable differences between Nightly and Stable:
-- *Include prereleases* - `true` for Nightly, `false` for Stable
-- *Fallback to older releases* - `false` for Nightly, `true` for Stable
-- *Use latest asset upload as release date* - `true` for Nightly, `false` for Stable (this is due to Nightly builds being uploaded to one release instead of creating new ones)
-- *Use release date as version string (pseudo-version)* - `true` for Nightly, `false` for Stable (this is due to Nightly builds being uploaded to one release instead of creating new ones)
-
 ## Tested with
 - Samsung S22 Android 15
 - Samsung S20 Android 12
 - Samsung A50 Android 11
+- Samsung Tab S10 FE
 
 ## ToDo
 - Implement new HEVC feature from droidcam plugin
