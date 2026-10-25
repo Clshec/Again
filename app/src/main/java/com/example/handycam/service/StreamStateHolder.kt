@@ -76,13 +76,16 @@ class StreamStateHolder @Inject constructor() {
     private val _autoExposure = MutableStateFlow(true)
     val autoExposure: StateFlow<Boolean> = _autoExposure.asStateFlow()
 
-    private val _iso = MutableStateFlow(0)
+    private val _manualExposureEnabled = MutableStateFlow(false)
+    val manualExposureEnabled: StateFlow<Boolean> = _manualExposureEnabled.asStateFlow()
+
+    private val _iso = MutableStateFlow(100)
     val iso: StateFlow<Int> = _iso.asStateFlow()
 
     private val _isoLocked = MutableStateFlow(false)
     val isoLocked: StateFlow<Boolean> = _isoLocked.asStateFlow()
 
-    private val _shutterSpeedNs = MutableStateFlow(0L)
+    private val _shutterSpeedNs = MutableStateFlow(16_666_667L)
     val shutterSpeedNs: StateFlow<Long> = _shutterSpeedNs.asStateFlow()
 
     private val _shutterLocked = MutableStateFlow(false)
@@ -115,7 +118,8 @@ class StreamStateHolder @Inject constructor() {
     fun setWhiteBalance(value: Int) { _whiteBalance.value = value }
     fun setWhiteBalanceLocked(value: Boolean) { _whiteBalanceLocked.value = value }
     fun setAutoExposure(value: Boolean) { _autoExposure.value = value }
-    fun setIso(value: Int) { _iso.value = value.coerceAtLeast(0) }
+    fun setManualExposureEnabled(value: Boolean) { _manualExposureEnabled.value = value }
+    fun setIso(value: Int) { _iso.value = value.coerceAtLeast(1) }
     fun setIsoLocked(value: Boolean) { _isoLocked.value = value }
     fun setShutterSpeedNs(value: Long) { _shutterSpeedNs.value = value.coerceAtLeast(0L) }
     fun setShutterLocked(value: Boolean) { _shutterLocked.value = value }

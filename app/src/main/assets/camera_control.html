@@ -253,6 +253,25 @@
             </div>
         </div>
 
+        <div class="card" id="manualExposureCard">
+            <div class="card-title">Manual sensor (ISO + Shutter)</div>
+            <button class="toggle-btn" id="manualExposureBtn" onclick="toggleManualExposure()">Manual: OFF</button>
+            <p id="manualExposureNote">Start a camera stream to check manual sensor support.</p>
+            <div id="manualSensorFields" style="display:none">
+                <div class="control-row">
+                    <label>ISO</label>
+                    <input type="range" id="manualIso" min="100" max="1600" step="1" value="100"
+                           onchange="setManualIso(this.value)"
+                           oninput="document.getElementById('manualIsoValue').textContent=this.value">
+                    <span class="val-label" id="manualIsoValue">100</span>
+                </div>
+                <div class="control-row">
+                    <label>Shutter</label>
+                    <select id="manualShutter" onchange="setManualShutter(this.value)"></select>
+                </div>
+            </div>
+        </div>
+
         <div class="card" id="zoomCard">
             <div class="card-title">Zoom</div>
             <div class="control-row">
@@ -356,6 +375,7 @@
                     jpegCard.style.display = '';
                 }
 
+                updateManualControls(data);
                 document.getElementById('exposureSlider').value = data.exposure;
                 document.getElementById('exposureValue').textContent = data.exposure;
 
@@ -555,6 +575,68 @@
             } finally {
                 btn.disabled = false;
             }
+        }
+
+        function updateManualControls(data) {
+            window.manualExposureEnabled = !!data.manualExposure;
+            window.manualExposureSupported = !!data.manualExposureSupported;
+            const button = document.getElementById('manualExposureBtn');
+            button.disabled = !window.manualExposureSupported;
+            button.textContent = 'Manual: ' + (window.manualExposureEnabled ? 'ON' : 'OFF');
+            button.classList.toggle('active', window.manualExposureEnabled);
+            document.getElementById('manualExposureNote').textContent =
+                window.manualExposureSupported
+                ? 'Manual values apply live, without restarting OBS.'
+                : 'MANUAL_SENSOR is unavailable until a compatible camera stream starts.';
+            document.getElementById('manualSensorFields').style.display =
+                window.manualExposureSupported && window.manualExposureEnabled ? '' : 'none';
+            const iso = document.getElementById('manualIso');
+            iso.min = data.isoMin;
+            iso.max = data.isoMax;
+            iso.value = Math.max(data.isoMin, Math.min(data.isoMax, data.iso));
+            document.getElementById('manualIsoValue').textContent = iso.value;
+            const shutter = document.getElementById('manualShutter');
+            const minNs = data.shutterMinNs, maxNs = data.shutterMaxNs;
+            const durations = [15,24,25,30,50,60,100,120,125,200,250,500,1000,2000,4000,8000]
+                .map(n => ({ns: Math.round(1e9/n), label: '1/'+n+' s'}))
+                .filter(x => x.ns >= minNs && x.ns <= maxNs);
+            const current = Math.max(minNs, Math.min(maxNs, data.shutterSpeedNs));
+            durations.push({ns: current, label: 'Current'});
+            shutter.replaceChildren();
+            durations.forEach(item => {
+                const opt = document.createElement('option');
+                opt.value = item.ns;
+                opt.textContent = item.label;
+                shutter.appendChild(opt);
+            });
+            shutter.value = String(current);
+        }
+
+        async function sendManualSetting(path, payload) {
+            const response = await fetch(path, {
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            if (!data.success) showMessage(data.message, false);
+            await checkCameraSettings();
+        }
+        async function toggleManualExposure() {
+            try {
+                await sendManualSetting('/api/settings/manual-exposure',
+                    {enabled: !window.manualExposureEnabled});
+            } catch (e) { showMessage('Could not toggle manual exposure: '+e.message, false); }
+        }
+        async function setManualIso(value) {
+            try {
+                await sendManualSetting('/api/settings/iso', {iso: Number(value)});
+            } catch(e) { showMessage('Could not set ISO: '+e.message, false); }
+        }
+        async function setManualShutter(value) {
+            try {
+                await sendManualSetting('/api/settings/shutter', {nanoseconds: Number(value)});
+            } catch(e) { showMessage('Could not set shutter: '+e.message, false); }
         }
 
         async function setExposure(exposure) {

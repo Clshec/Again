@@ -35,6 +35,12 @@ class CameraControlViewModel @Inject constructor(
     val whiteBalanceLocked: StateFlow<Boolean> = streamStateHolder.whiteBalanceLocked
     val autoFocus: StateFlow<Boolean> = streamStateHolder.autoFocus
     val autoExposure: StateFlow<Boolean> = streamStateHolder.autoExposure
+    val manualExposureEnabled: StateFlow<Boolean> = streamStateHolder.manualExposureEnabled
+    val manualExposureSupported: StateFlow<Boolean> = cameraStateHolder.manualExposureSupported
+    val isoMin: StateFlow<Int> = cameraStateHolder.isoMin
+    val isoMax: StateFlow<Int> = cameraStateHolder.isoMax
+    val shutterMinNs: StateFlow<Long> = cameraStateHolder.shutterMinNs
+    val shutterMaxNs: StateFlow<Long> = cameraStateHolder.shutterMaxNs
     val iso: StateFlow<Int> = streamStateHolder.iso
     val isoLocked: StateFlow<Boolean> = streamStateHolder.isoLocked
     val shutterSpeedNs: StateFlow<Long> = streamStateHolder.shutterSpeedNs
@@ -96,6 +102,11 @@ class CameraControlViewModel @Inject constructor(
 
     fun setAutoExposure(enabled: Boolean) {
         streamStateHolder.setAutoExposure(enabled)
+    }
+
+    fun setManualExposureEnabled(enabled: Boolean) {
+        if (enabled && !cameraStateHolder.manualExposureSupported.value) return
+        streamStateHolder.setManualExposureEnabled(enabled)
     }
 
     fun setIso(value: Int) {

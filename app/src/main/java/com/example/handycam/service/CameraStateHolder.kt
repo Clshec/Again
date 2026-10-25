@@ -39,6 +39,35 @@ class CameraStateHolder @Inject constructor() {
     private val _encoderHeight = MutableStateFlow(0)
     val encoderHeight: StateFlow<Int> = _encoderHeight
 
+    // Only report true after the active camera exposes Camera2 MANUAL_SENSOR.
+    private val _manualExposureSupported = MutableStateFlow(false)
+    val manualExposureSupported: StateFlow<Boolean> = _manualExposureSupported
+    private val _isoMin = MutableStateFlow(100)
+    val isoMin: StateFlow<Int> = _isoMin
+    private val _isoMax = MutableStateFlow(1600)
+    val isoMax: StateFlow<Int> = _isoMax
+    private val _shutterMinNs = MutableStateFlow(125_000L)
+    val shutterMinNs: StateFlow<Long> = _shutterMinNs
+    private val _shutterMaxNs = MutableStateFlow(33_333_333L)
+    val shutterMaxNs: StateFlow<Long> = _shutterMaxNs
+
+    fun setManualExposureCapabilities(
+        supported: Boolean,
+        isoRange: android.util.Range<Int>?,
+        exposureRange: android.util.Range<Long>?,
+        fps: Int
+    ) {
+        val frameMaxNs = 1_000_000_000L / fps.coerceAtLeast(1)
+        val minNs = exposureRange?.lower ?: 125_000L
+        val maxNs = minOf(exposureRange?.upper ?: frameMaxNs, frameMaxNs)
+        _isoMin.value = isoRange?.lower ?: 100
+        _isoMax.value = maxOf(isoRange?.upper ?: 1600, _isoMin.value)
+        _shutterMinNs.value = minNs
+        _shutterMaxNs.value = maxOf(minNs, maxNs)
+        _manualExposureSupported.value = supported && isoRange != null &&
+            exposureRange != null && maxNs >= minNs
+    }
+
     private val _exposureMin = MutableStateFlow(0)
     val exposureMin: StateFlow<Int> = _exposureMin
 
@@ -56,6 +85,7 @@ class CameraStateHolder @Inject constructor() {
     }
 
     fun clear() {
+        _manualExposureSupported.value = false
         previewSurface = null
         previewSurfaceProvider = null
         cameraControl = null

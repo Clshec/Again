@@ -202,6 +202,9 @@ class StreamService : LifecycleService() {
                 try { updateCamera2Request() } catch (e: Exception) { Log.e(TAG, "ae lock update error", e) }
             }
         }
+        lifecycleScope.launch { streamStateHolder.manualExposureEnabled.collect { applyManualExposure() } }
+        lifecycleScope.launch { streamStateHolder.iso.collect { applyManualExposure() } }
+        lifecycleScope.launch { streamStateHolder.shutterSpeedNs.collect { applyManualExposure() } }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -391,12 +394,20 @@ class StreamService : LifecycleService() {
             val flashMode = if (streamStateHolder.torchEnabled.value)
                 CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF
             try { b.set(CaptureRequest.FLASH_MODE, flashMode) } catch (_: Exception) {}
-            // Exposure compensation & lock
-            val autoExposureEnabled = streamStateHolder.autoExposure.value
-            try { b.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON) } catch (_: Exception) {}
-            try { b.set(CaptureRequest.CONTROL_AE_LOCK, !autoExposureEnabled) } catch (_: Exception) {}
-            val ev = streamStateHolder.exposure.value
-            try { b.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, ev) } catch (_: Exception) {}
+            // Manual ISO and shutter; restore original AE/EV semantics when off.
+            if (streamStateHolder.manualExposureEnabled.value &&
+                cameraStateHolder.manualExposureSupported.value) {
+                b.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+                b.set(CaptureRequest.SENSOR_SENSITIVITY,
+                    streamStateHolder.iso.value.coerceIn(cameraStateHolder.isoMin.value, cameraStateHolder.isoMax.value))
+                b.set(CaptureRequest.SENSOR_EXPOSURE_TIME,
+                    streamStateHolder.shutterSpeedNs.value.coerceIn(
+                        cameraStateHolder.shutterMinNs.value, cameraStateHolder.shutterMaxNs.value))
+            } else {
+                b.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                b.set(CaptureRequest.CONTROL_AE_LOCK, !streamStateHolder.autoExposure.value)
+                b.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, streamStateHolder.exposure.value)
+            }
 
             // Focus lock
             val afMode = if (streamStateHolder.autoFocus.value)
@@ -404,6 +415,10 @@ class StreamService : LifecycleService() {
             else
                 CaptureRequest.CONTROL_AF_MODE_OFF
             try { b.set(CaptureRequest.CONTROL_AF_MODE, afMode) } catch (_: Exception) {}
+            if (!streamStateHolder.autoFocus.value) {
+                try { b.set(CaptureRequest.LENS_FOCUS_DISTANCE,
+                    (streamStateHolder.focus.value / 100.0f).coerceIn(0f, 1f)) } catch (_: Exception) {}
+            }
 
             // Zoom
             val zoom = streamStateHolder.zoom.value
@@ -460,6 +475,52 @@ class StreamService : LifecycleService() {
         }
     }
 
+    private fun setManualCapabilities(chars: CameraCharacteristics?) {
+        val caps = chars?.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+        cameraStateHolder.setManualExposureCapabilities(
+            caps?.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR) == true,
+            chars?.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE),
+            chars?.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE),
+            targetFps
+        )
+    }
+
+    private fun setManualCapabilitiesForCameraX(info: androidx.camera.core.CameraInfo) {
+        try {
+            val id = Camera2CameraInfo.from(info).cameraId
+            val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            setManualCapabilities(manager.getCameraCharacteristics(id))
+        } catch (e: Exception) {
+            setManualCapabilities(null)
+            Log.w(TAG, "Cannot query manual exposure capabilities", e)
+        }
+    }
+
+    // A manual sensor request must always specify ISO and shutter together.
+    private fun applyManualExposure() {
+        if (useAvc) {
+            updateCamera2Request()
+            return
+        }
+        val cc = cameraStateHolder.cameraControl ?: return
+        try {
+            val options = androidx.camera.camera2.interop.CaptureRequestOptions.Builder()
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, streamStateHolder.whiteBalance.value)
+            if (streamStateHolder.manualExposureEnabled.value &&
+                cameraStateHolder.manualExposureSupported.value) {
+                options.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+                    .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY,
+                        streamStateHolder.iso.value.coerceIn(cameraStateHolder.isoMin.value, cameraStateHolder.isoMax.value))
+                    .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME,
+                        streamStateHolder.shutterSpeedNs.value.coerceIn(
+                            cameraStateHolder.shutterMinNs.value, cameraStateHolder.shutterMaxNs.value))
+            }
+            androidx.camera.camera2.interop.Camera2CameraControl.from(cc).captureRequestOptions = options.build()
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not apply manual exposure", e)
+        }
+    }
+
     // Apply torch state to camera (CameraX or Camera2)
     private fun applyTorch(enabled: Boolean) {
         try {
@@ -496,35 +557,9 @@ class StreamService : LifecycleService() {
         }
     }
 
-    // Apply manual focus (best-effort: Camera2 LENS_FOCUS_DISTANCE)
+    // Rebuild from the shared request to preserve ISO and shutter during focus adjustments.
     private fun applyFocus(value: Int) {
-        try {
-            if (!useAvc) {
-                Log.i(TAG, "Manual focus requested ($value) but CameraX manual focus not supported; ignoring")
-            } else {
-                // Focus distance is applied separately since it changes AF mode
-                cameraHandler?.post {
-                    val cam = cameraDevice ?: return@post
-                    val session = captureSession ?: return@post
-                    val req = buildCamera2Request(cam) ?: return@post
-                    // Re-build with manual focus override — use a fresh builder from the same surfaces
-                    try {
-                        val b = cam.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
-                        sessionSurfaces.forEach { b.addTarget(it) }
-                        b.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                        val fd = if (value <= 0) 0.0f else (1.0f.coerceAtMost(value / 100.0f))
-                        b.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
-                        b.set(CaptureRequest.LENS_FOCUS_DISTANCE, fd)
-                        session.setRepeatingRequest(b.build(), null, cameraHandler)
-                        Log.i(TAG, "Applied focus via Camera2: slider=$value -> distance=$fd")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to apply focus on Camera2", e)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "applyFocus error", e)
-        }
+        if (useAvc) updateCamera2Request()
     }
 
     private fun applyAutoFocus(enabled: Boolean) {
@@ -553,21 +588,7 @@ class StreamService : LifecycleService() {
     }
 
     private fun applyWhiteBalance(mode: Int) {
-        try {
-            if (!useAvc) {
-                cameraStateHolder.cameraControl?.let {
-                    androidx.camera.camera2.interop.Camera2CameraControl.from(it).captureRequestOptions =
-                        androidx.camera.camera2.interop.CaptureRequestOptions.Builder()
-                            .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, mode)
-                            .build()
-                }
-                Log.i(TAG, "Applied WB via Camera2Interop: $mode")
-            } else {
-                updateCamera2Request()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "applyWhiteBalance error", e)
-        }
+        if (!useAvc) applyManualExposure() else updateCamera2Request()
     }
 
     private fun registerMdns(port: Int) {
@@ -711,7 +732,9 @@ class StreamService : LifecycleService() {
                     // Store camera control for preview activity
                     cameraStateHolder.cameraControl = camera.cameraControl
                     cameraStateHolder.cameraInfo = camera.cameraInfo
-                    
+                    setManualCapabilitiesForCameraX(camera.cameraInfo)
+                    applyManualExposure()
+
                     Log.i(TAG, "Camera bound in service (MJPEG): $selectedCamera (physical: ${physicalCameraId ?: "auto"}) with ${useCases.size} use cases")
                     
                     // Notify that camera is ready
@@ -791,6 +814,7 @@ class StreamService : LifecycleService() {
         cameraStateHolder.cameraInfo = null
         cameraStateHolder.setEncoderSize(0, 0)
         cameraStateHolder.setExposureRange(0, 0)
+        setManualCapabilities(null)
 
         try {
             // stop and release encoder after camera surfaces are torn down
@@ -1444,6 +1468,7 @@ class StreamService : LifecycleService() {
         var chosenHeight = reqHeight
         try {
             val chars = cameraManager?.getCameraCharacteristics(camId)
+            setManualCapabilities(chars)
             val exposureRange = chars?.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
             if (exposureRange != null) {
                 cameraStateHolder.setExposureRange(exposureRange.lower, exposureRange.upper)
@@ -1777,6 +1802,8 @@ class StreamService : LifecycleService() {
                         val camera = provider.bindToLifecycle(this@StreamService, selector, *useCases.toTypedArray())
                         cameraStateHolder.cameraControl = camera.cameraControl
                         cameraStateHolder.cameraInfo = camera.cameraInfo
+                        setManualCapabilitiesForCameraX(camera.cameraInfo)
+                        applyManualExposure()
                         try { cameraStateHolder.cameraControl?.setLinearZoom(0f) } catch (_: Exception) {}
                         Log.i(TAG, "Switched CameraX binding to $selectedCamera (physical: ${physicalCameraId ?: "auto"}) with ${useCases.size} use cases")
                     }
@@ -1876,12 +1903,9 @@ class StreamService : LifecycleService() {
                     captureSession = newSession
                     sessionSurfaces = surfaces.toList()
                     try {
-                        val builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
-                        surfaces.forEach { builder.addTarget(it) }
-                        builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                        builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
-                        
-                        newSession.setRepeatingRequest(builder.build(), null, cameraHandler)
+                        val request = buildCamera2Request(camera)
+                            ?: throw IllegalStateException("No active Camera2 session surfaces")
+                        newSession.setRepeatingRequest(request, null, cameraHandler)
                         Log.i(TAG, "Camera2 session reconfigured with ${surfaces.size} surfaces")
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to start repeating request after reconfigure", e)
@@ -1919,6 +1943,8 @@ class StreamService : LifecycleService() {
                 val camera = provider.bindToLifecycle(this@StreamService, selector, *useCases.toTypedArray())
                 cameraStateHolder.cameraControl = camera.cameraControl
                 cameraStateHolder.cameraInfo = camera.cameraInfo
+                setManualCapabilitiesForCameraX(camera.cameraInfo)
+                applyManualExposure()
                 Log.i(TAG, "CameraX rebound with ${useCases.size} use cases")
             }
         } catch (e: Exception) {

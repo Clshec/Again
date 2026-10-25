@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">HandyCam</string>
+    <string name="app_name">HandyCam Manual</string>
     <string name="start_server">Start Server</string>
     <string name="stop_server">Stop Server</string>
     <string name="start_https_server">Start HTTPS Server</string>

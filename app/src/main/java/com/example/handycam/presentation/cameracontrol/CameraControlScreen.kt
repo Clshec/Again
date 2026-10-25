@@ -86,6 +86,14 @@ fun CameraControlScreen(
     val zoom by viewModel.zoom.collectAsState()
     val autoFocus by viewModel.autoFocus.collectAsState()
     val autoExposure by viewModel.autoExposure.collectAsState()
+    val manualExposureEnabled by viewModel.manualExposureEnabled.collectAsState()
+    val manualExposureSupported by viewModel.manualExposureSupported.collectAsState()
+    val manualIso by viewModel.iso.collectAsState()
+    val manualIsoMin by viewModel.isoMin.collectAsState()
+    val manualIsoMax by viewModel.isoMax.collectAsState()
+    val manualShutter by viewModel.shutterSpeedNs.collectAsState()
+    val manualShutterMin by viewModel.shutterMinNs.collectAsState()
+    val manualShutterMax by viewModel.shutterMaxNs.collectAsState()
     val selectedCameraId by viewModel.streamStateHolder.camera.collectAsState()
     val whiteBalance by viewModel.whiteBalance.collectAsState()
     val whiteBalanceLocked by viewModel.whiteBalanceLocked.collectAsState()
@@ -432,6 +440,45 @@ fun CameraControlScreen(
                         contentDescription = if (wbLockedUi) "White balance locked" else "White balance unlocked",
                         tint = if (wbLockedUi) Color(0xFFFF5A5A) else Color.White
                     )
+                }
+            }
+        }
+
+        // Compact sensor controls, only shown if the active camera supports Camera2 MANUAL_SENSOR.
+        // Cycle through safe presets rather than adding sliders and a new settings screen.
+        if (manualExposureSupported) {
+            Surface(
+                color = Color(0xD11A1A1A),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 70.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(onClick = { viewModel.setManualExposureEnabled(!manualExposureEnabled) }) {
+                        Text(if (manualExposureEnabled) "Manual" else "Auto", color = Color.White)
+                    }
+                    if (manualExposureEnabled) {
+                        val isoChoices = listOf(manualIsoMin, 100, 200, 400, 800, 1600, 3200, manualIsoMax)
+                            .filter { it in manualIsoMin..manualIsoMax }.distinct().sorted()
+                        OutlinedButton(onClick = {
+                            viewModel.setIso(isoChoices.firstOrNull { it > manualIso } ?: isoChoices.first())
+                        }) {
+                            Text("ISO $manualIso", color = Color.White)
+                        }
+                        val shutterChoices = listOf(15, 25, 30, 50, 60, 100, 120, 250, 500, 1000)
+                            .map { 1_000_000_000L / it }
+                            .filter { it in manualShutterMin..manualShutterMax }.sortedDescending()
+                            .ifEmpty { listOf(manualShutterMax) }
+                        OutlinedButton(onClick = {
+                            val next = shutterChoices.firstOrNull { it < manualShutter } ?: shutterChoices.first()
+                            viewModel.setShutterSpeedNs(next)
+                        }) {
+                            Text(shutterLabel(manualShutter), color = Color.White)
+                        }
+                    }
                 }
             }
         }

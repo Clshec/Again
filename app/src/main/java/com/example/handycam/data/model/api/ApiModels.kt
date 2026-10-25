@@ -31,7 +31,15 @@ data class CameraStatusResponse(
     val torchEnabled: Boolean,
     val autoFocus: Boolean,
     val exposure: Int,
-    val avcBitrate: Int
+    val avcBitrate: Int,
+    val manualExposure: Boolean,
+    val manualExposureSupported: Boolean,
+    val iso: Int,
+    val isoMin: Int,
+    val isoMax: Int,
+    val shutterSpeedNs: Long,
+    val shutterMinNs: Long,
+    val shutterMaxNs: Long
 )
 
 @Serializable

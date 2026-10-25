@@ -49,6 +49,7 @@ class KtorHttpServerService : LifecycleService() {
     private var httpPort = 8080
     private var isRunning = false
     @javax.inject.Inject lateinit var streamStateHolder: com.example.handycam.service.StreamStateHolder
+    @javax.inject.Inject lateinit var cameraStateHolder: com.example.handycam.service.CameraStateHolder
     
     private var startTime: Long = 0
 
@@ -280,7 +281,15 @@ class KtorHttpServerService : LifecycleService() {
                     torchEnabled = (streamStateHolder.torchEnabled.value),
                     autoFocus = (streamStateHolder.autoFocus.value),
                     exposure = (streamStateHolder.exposure.value),
-                    avcBitrate = (streamStateHolder.avcBitrate.value)
+                    avcBitrate = (streamStateHolder.avcBitrate.value),
+                    manualExposure = streamStateHolder.manualExposureEnabled.value,
+                    manualExposureSupported = cameraStateHolder.manualExposureSupported.value,
+                    iso = streamStateHolder.iso.value,
+                    isoMin = cameraStateHolder.isoMin.value,
+                    isoMax = cameraStateHolder.isoMax.value,
+                    shutterSpeedNs = streamStateHolder.shutterSpeedNs.value,
+                    shutterMinNs = cameraStateHolder.shutterMinNs.value,
+                    shutterMaxNs = cameraStateHolder.shutterMaxNs.value
                 )
                 call.respond(status)
             }
@@ -497,6 +506,52 @@ class KtorHttpServerService : LifecycleService() {
                     call.respond(ApiResponse(true, "Auto focus ${if (enabled) "enabled" else "disabled"}"))
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.BadRequest, ApiResponse(false, "Failed to set auto focus: ${e.message}"))
+                }
+            }
+
+            // No new permissions, libraries, or network listeners. Same authenticated
+            // server as the existing camera controls.
+            post("/api/settings/manual-exposure") {
+                try {
+                    val params = call.receive<Map<String, Boolean>>()
+                    val enabled = params["enabled"] ?: throw IllegalArgumentException("enabled missing")
+                    if (enabled && !cameraStateHolder.manualExposureSupported.value) {
+                        call.respond(HttpStatusCode.BadRequest,
+                            ApiResponse(false, "Active camera does not report MANUAL_SENSOR"))
+                    } else {
+                        streamStateHolder.setManualExposureEnabled(enabled)
+                        call.respond(ApiResponse(true, "Manual exposure: $enabled"))
+                    }
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.BadRequest, ApiResponse(false, "Invalid mode: ${e.message}"))
+                }
+            }
+
+            post("/api/settings/iso") {
+                try {
+                    val iso = call.receive<Map<String, Int>>()["iso"]
+                        ?: throw IllegalArgumentException("iso missing")
+                    require(iso in cameraStateHolder.isoMin.value..cameraStateHolder.isoMax.value) {
+                        "ISO must be in active sensor range"
+                    }
+                    streamStateHolder.setIso(iso)
+                    call.respond(ApiResponse(true, "ISO set to $iso"))
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.BadRequest, ApiResponse(false, "Invalid ISO: ${e.message}"))
+                }
+            }
+
+            post("/api/settings/shutter") {
+                try {
+                    val ns = call.receive<Map<String, Long>>()["nanoseconds"]
+                        ?: throw IllegalArgumentException("nanoseconds missing")
+                    require(ns in cameraStateHolder.shutterMinNs.value..cameraStateHolder.shutterMaxNs.value) {
+                        "Shutter must be in active sensor/FPS range"
+                    }
+                    streamStateHolder.setShutterSpeedNs(ns)
+                    call.respond(ApiResponse(true, "Shutter updated"))
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.BadRequest, ApiResponse(false, "Invalid shutter: ${e.message}"))
                 }
             }
 
