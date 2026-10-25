@@ -194,12 +194,20 @@ class StreamService : LifecycleService() {
         }
         lifecycleScope.launch {
             streamStateHolder.whiteBalanceLocked.collect {
-                try { updateCamera2Request() } catch (e: Exception) { Log.e(TAG, "awb lock update error", e) }
+                try { if (useAvc) updateCamera2Request() else applyManualExposure() }
+                catch (e: Exception) { Log.e(TAG, "awb lock update error", e) }
             }
         }
         lifecycleScope.launch {
             streamStateHolder.autoExposure.collect {
-                try { updateCamera2Request() } catch (e: Exception) { Log.e(TAG, "ae lock update error", e) }
+                try { if (useAvc) updateCamera2Request() else applyManualExposure() }
+                catch (e: Exception) { Log.e(TAG, "ae lock update error", e) }
+            }
+        }
+        lifecycleScope.launch {
+            streamStateHolder.antiBanding.collect {
+                try { if (useAvc) updateCamera2Request() else applyManualExposure() }
+                catch (e: Exception) { Log.e(TAG, "antibanding update error", e) }
             }
         }
         lifecycleScope.launch { streamStateHolder.manualExposureEnabled.collect { applyManualExposure() } }
@@ -416,8 +424,12 @@ class StreamService : LifecycleService() {
                 CaptureRequest.CONTROL_AF_MODE_OFF
             try { b.set(CaptureRequest.CONTROL_AF_MODE, afMode) } catch (_: Exception) {}
             if (!streamStateHolder.autoFocus.value) {
-                try { b.set(CaptureRequest.LENS_FOCUS_DISTANCE,
-                    (streamStateHolder.focus.value / 100.0f).coerceIn(0f, 1f)) } catch (_: Exception) {}
+                val maxDiopters = cameraStateHolder.minFocusDistance.value
+                if (maxDiopters > 0f) {
+                    try { b.set(CaptureRequest.LENS_FOCUS_DISTANCE,
+                        (streamStateHolder.focus.value / 100f).coerceIn(0f, 1f) * maxDiopters) }
+                    catch (_: Exception) {}
+                }
             }
 
             // Zoom
@@ -450,6 +462,10 @@ class StreamService : LifecycleService() {
             // White balance
             val wbMode = streamStateHolder.whiteBalance.value
             try { b.set(CaptureRequest.CONTROL_AWB_MODE, wbMode) } catch (_: Exception) {}
+            val antiBand = streamStateHolder.antiBanding.value
+            if (antiBand in cameraStateHolder.antiBandingModes.value) {
+                try { b.set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, antiBand) } catch (_: Exception) {}
+            }
             val wbLock = streamStateHolder.whiteBalanceLocked.value &&
                 wbMode == CaptureRequest.CONTROL_AWB_MODE_AUTO
             try { b.set(CaptureRequest.CONTROL_AWB_LOCK, wbLock) } catch (_: Exception) {}
@@ -481,7 +497,10 @@ class StreamService : LifecycleService() {
             caps?.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR) == true,
             chars?.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE),
             chars?.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE),
-            targetFps
+            targetFps,
+            chars?.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE),
+            chars?.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES),
+            chars?.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_ANTIBANDING_MODES)
         )
     }
 
@@ -506,6 +525,16 @@ class StreamService : LifecycleService() {
         try {
             val options = androidx.camera.camera2.interop.CaptureRequestOptions.Builder()
                 .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, streamStateHolder.whiteBalance.value)
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK,
+                    streamStateHolder.whiteBalanceLocked.value &&
+                        streamStateHolder.whiteBalance.value == CaptureRequest.CONTROL_AWB_MODE_AUTO)
+            if (streamStateHolder.antiBanding.value in cameraStateHolder.antiBandingModes.value) {
+                options.setCaptureRequestOption(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE,
+                    streamStateHolder.antiBanding.value)
+            }
+            if (!streamStateHolder.manualExposureEnabled.value) {
+                options.setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, !streamStateHolder.autoExposure.value)
+            }
             if (streamStateHolder.manualExposureEnabled.value &&
                 cameraStateHolder.manualExposureSupported.value) {
                 options.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)

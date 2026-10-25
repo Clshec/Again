@@ -280,6 +280,14 @@ class KtorHttpServerService : LifecycleService() {
                     zoomLocked = (streamStateHolder.zoomLocked.value),
                     torchEnabled = (streamStateHolder.torchEnabled.value),
                     autoFocus = (streamStateHolder.autoFocus.value),
+                    focus = streamStateHolder.focus.value,
+                    minFocusDistance = cameraStateHolder.minFocusDistance.value,
+                    autoExposure = streamStateHolder.autoExposure.value,
+                    whiteBalance = streamStateHolder.whiteBalance.value,
+                    whiteBalanceLocked = streamStateHolder.whiteBalanceLocked.value,
+                    availableWhiteBalanceModes = cameraStateHolder.whiteBalanceModes.value,
+                    antiBanding = streamStateHolder.antiBanding.value,
+                    availableAntiBandingModes = cameraStateHolder.antiBandingModes.value,
                     exposure = (streamStateHolder.exposure.value),
                     avcBitrate = (streamStateHolder.avcBitrate.value),
                     manualExposure = streamStateHolder.manualExposureEnabled.value,
@@ -498,10 +506,67 @@ class KtorHttpServerService : LifecycleService() {
                 }
             }
 
+            post("/api/settings/auto-exposure") {
+                try {
+                    val enabled = call.receive<Map<String, Boolean>>()["enabled"]
+                        ?: throw IllegalArgumentException("enabled missing")
+                    streamStateHolder.setAutoExposure(enabled)
+                    call.respond(ApiResponse(true, "AE lock updated"))
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.BadRequest, ApiResponse(false, "Invalid AE lock: " + e.message))
+                }
+            }
+
+            post("/api/settings/white-balance") {
+                try {
+                    val mode = call.receive<Map<String, Int>>()["mode"]
+                        ?: throw IllegalArgumentException("mode missing")
+                    require(mode in cameraStateHolder.whiteBalanceModes.value) {
+                        "White balance mode not supported by active camera"
+                    }
+                    streamStateHolder.setWhiteBalance(mode)
+                    if (mode != 1) streamStateHolder.setWhiteBalanceLocked(false)
+                    call.respond(ApiResponse(true, "White balance updated"))
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.BadRequest, ApiResponse(false, "Invalid white balance: " + e.message))
+                }
+            }
+
+            post("/api/settings/white-balance-lock") {
+                try {
+                    val enabled = call.receive<Map<String, Boolean>>()["enabled"]
+                        ?: throw IllegalArgumentException("enabled missing")
+                    require(!enabled || streamStateHolder.whiteBalance.value == 1) {
+                        "AWB lock requires Auto white balance"
+                    }
+                    streamStateHolder.setWhiteBalanceLocked(enabled)
+                    call.respond(ApiResponse(true, "White balance lock updated"))
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.BadRequest, ApiResponse(false, "Invalid AWB lock: " + e.message))
+                }
+            }
+
+            post("/api/settings/anti-banding") {
+                try {
+                    val mode = call.receive<Map<String, Int>>()["mode"]
+                        ?: throw IllegalArgumentException("mode missing")
+                    require(mode in cameraStateHolder.antiBandingModes.value) {
+                        "Anti-flicker mode not supported by active camera"
+                    }
+                    streamStateHolder.setAntiBanding(mode)
+                    call.respond(ApiResponse(true, "Anti-flicker updated"))
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.BadRequest, ApiResponse(false, "Invalid anti-flicker: " + e.message))
+                }
+            }
+
             post("/api/settings/auto-focus") {
                 try {
                     val params = call.receive<Map<String, Boolean>>()
                     val enabled = params["enabled"] ?: true
+                    require(streamStateHolder.useAvc.value && cameraStateHolder.minFocusDistance.value > 0f) {
+                        "Manual focus is available in H.264 mode on compatible cameras"
+                    }
                     streamStateHolder.setAutoFocus(enabled)
                     call.respond(ApiResponse(true, "Auto focus ${if (enabled) "enabled" else "disabled"}"))
                 } catch (e: Exception) {
@@ -587,6 +652,10 @@ class KtorHttpServerService : LifecycleService() {
                 try {
                     val params = call.receive<Map<String, Int>>()
                     val focus = params["focus"] ?: 0
+                    require(streamStateHolder.useAvc.value && cameraStateHolder.minFocusDistance.value > 0f) {
+                        "Manual focus is available in H.264 mode on compatible cameras"
+                    }
+                    require(focus in 0..100) { "Focus must be 0..100" }
                     streamStateHolder.setFocus(focus)
                     call.respond(ApiResponse(true, "Focus updated to $focus"))
                 } catch (e: Exception) {

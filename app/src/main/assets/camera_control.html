@@ -154,6 +154,11 @@
         .message.success { background: #f0faf3; border: 1px solid #b0dfc0; color: #1a6e37; display: block; }
         .message.error   { background: #fdf3f3; border: 1px solid #f0c0c0; color: #7a2020; display: block; }
 
+        .manual-number { width: 100px; min-width: 85px; padding: 7px 9px; border: 1px solid #ccc; border-radius: 5px; font: inherit; }
+        .manual-text { width: 112px; min-width: 95px; padding: 7px 9px; border: 1px solid #ccc; border-radius: 5px; font: inherit; }
+        .manual-help { color: #666; font-size: .78rem; margin: 6px 0; }
+        .manual-presets { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 0; }
+        .manual-presets button { flex: 1; min-width: 64px; width: auto; padding: 6px; font-size: .8rem; }
         .camera-btn-row {
             display: flex;
             gap: 8px;
@@ -261,15 +266,58 @@
                 <div class="control-row">
                     <label>ISO</label>
                     <input type="range" id="manualIso" min="100" max="1600" step="1" value="100"
+                           onpointerdown="window.manualControlDragging=true"
+                           onpointerup="window.manualControlDragging=false"
                            onchange="setManualIso(this.value)"
-                           oninput="document.getElementById('manualIsoValue').textContent=this.value">
+                           oninput="document.getElementById('manualIsoValue').textContent=this.value; document.getElementById('manualIsoInput').value=this.value">
+                    <input class="manual-number" type="number" id="manualIsoInput" value="100" step="1"
+                           aria-label="ISO exact value" onchange="submitManualIsoInput(this.value)">
                     <span class="val-label" id="manualIsoValue">100</span>
                 </div>
                 <div class="control-row">
                     <label>Shutter</label>
-                    <select id="manualShutter" onchange="setManualShutter(this.value)"></select>
+                    <input type="range" id="manualShutterSlider" min="0" max="1000" step="1" value="400"
+                           onpointerdown="window.manualControlDragging=true"
+                           onpointerup="window.manualControlDragging=false"
+                           oninput="previewManualShutter(this.value)"
+                           onchange="setManualShutterFromSlider(this.value)">
+                    <input class="manual-text" type="text" id="manualShutterInput" value="1/50"
+                           aria-label="Shutter exact duration" placeholder="1/50"
+                           onchange="submitManualShutterText(this.value)">
+                </div>
+                <p class="manual-help" id="manualShutterNote">Shutter: 1/50, 1/125, 20ms, or 0.02s. Limited by sensor and FPS.</p>
+                <div class="manual-presets">
+                    <button type="button" class="btn-secondary" onclick="submitManualShutterText('1/50')">1/50</button>
+                    <button type="button" class="btn-secondary" onclick="submitManualShutterText('1/100')">1/100</button>
+                    <button type="button" class="btn-secondary" onclick="submitManualShutterText('1/250')">1/250</button>
                 </div>
             </div>
+        </div>
+
+        <div class="card" id="additionalControls" style="display:none">
+            <div class="card-title">Camera color &amp; focus</div>
+            <div class="control-row">
+                <label>White balance</label>
+                <select id="whiteBalanceSelect" onchange="setWhiteBalanceMode(this.value)"></select>
+            </div>
+            <button class="toggle-btn" id="whiteBalanceLockBtn" onclick="toggleWhiteBalanceLock()">AWB lock: OFF</button>
+            <p class="manual-help">Lock is available with Auto white balance.</p>
+            <div class="control-row" id="antiBandRow">
+                <label>Anti-flicker</label>
+                <select id="antiBandSelect" onchange="setAntiBandMode(this.value)"></select>
+            </div>
+            <div id="focusGroup" style="display:none">
+                <button class="toggle-btn" id="autoFocusBtn" onclick="toggleAutoFocusMode()">Focus: Auto</button>
+                <div class="control-row" id="manualFocusRow">
+                    <label>Focus</label>
+                    <input type="range" id="manualFocusSlider" min="0" max="100" step="1" value="0"
+                           oninput="document.getElementById('manualFocusValue').textContent=this.value+'%'"
+                           onchange="setManualFocus(this.value)">
+                    <span class="val-label" id="manualFocusValue">0%</span>
+                </div>
+                <p class="manual-help">0% = far / infinity, 100% = nearest. Only H.264 on supported lenses.</p>
+            </div>
+            <p id="focusUnavailableNote" class="manual-help">Manual focus is available only in H.264 on compatible lenses.</p>
         </div>
 
         <div class="card" id="zoomCard">
@@ -286,7 +334,7 @@
             <button class="toggle-btn" id="torchBtn" onclick="toggleTorch()">Torch: OFF</button>
             <div id="torchNote">Torch only works while stream is active</div>
             <button class="toggle-btn" id="useAvcBtn" onclick="toggleUseAvc()">Codec: MJPEG</button>
-            <button class="toggle-btn" id="autoExposureBtn" onclick="toggleAutoExposure()">Auto Exposure: ON</button>
+            <button class="toggle-btn" id="autoExposureBtn" onclick="toggleAutoExposure()">AE lock: OFF</button>
         </div>
 
         <div class="card">
@@ -376,24 +424,12 @@
                 }
 
                 updateManualControls(data);
+                updateAdvancedControls(data);
                 document.getElementById('exposureSlider').value = data.exposure;
                 document.getElementById('exposureValue').textContent = data.exposure;
 
-                // auto exposure visibility
-                const autoExposureEnabledLocal = data.autoExposure === true;
-                // When auto-exposure is enabled, hide manual exposure slider
-                if (autoExposureEnabledLocal) {
-                    document.getElementById('exposureCard').style.display = 'none';
-                    document.getElementById('autoExposureBtn').textContent = 'Auto Exposure: ON';
-                    document.getElementById('autoExposureBtn').classList.add('active');
-                } else {
-                    document.getElementById('exposureCard').style.display = '';
-                    document.getElementById('autoExposureBtn').textContent = 'Auto Exposure: OFF';
-                    document.getElementById('autoExposureBtn').classList.remove('active');
-                }
-
-                // remember auto flags for UI
-                window.autoExposureEnabled = autoExposureEnabledLocal;
+                // AE lock is separate from Manual ISO/Shutter (updated by updateAdvancedControls).
+                window.autoExposureEnabled = data.autoExposure === true;
 
                 // Toggles
                 torchEnabled = data.torchEnabled === true;
@@ -577,6 +613,36 @@
             }
         }
 
+        // The UI reports true Camera2 sensor bounds; never allow an arbitrary slider to exceed FPS.
+        let manualSensorBounds = {isoMin:100, isoMax:1600, shutterMinNs:125000, shutterMaxNs:33333333};
+        let currentAdvancedStatus = {};
+        window.manualControlDragging = false;
+        let manualSettingsInFlight = 0;
+
+        function shutterLabel(ns) {
+            const sec = ns / 1e9;
+            return sec >= 1 ? sec.toFixed(2) + 's' : '1/' + Math.round(1 / sec);
+        }
+        function sliderToShutter(position) {
+            const b = manualSensorBounds;
+            const fraction = Math.max(0, Math.min(1, Number(position) / 1000));
+            return Math.round(b.shutterMaxNs * Math.pow(b.shutterMinNs / b.shutterMaxNs, fraction));
+        }
+        function shutterToSlider(ns) {
+            const b = manualSensorBounds;
+            if (b.shutterMaxNs <= b.shutterMinNs) return 0;
+            return Math.max(0, Math.min(1000,
+                Math.round(1000 * Math.log(ns / b.shutterMaxNs) / Math.log(b.shutterMinNs / b.shutterMaxNs))));
+        }
+        function parseShutter(text) {
+            const value = String(text).trim().toLowerCase().replace(/\s+/g, '');
+            if (/^1\/\d+(\.\d+)?s?$/.test(value)) {
+                return Math.round(1e9 / Number(value.slice(2).replace(/s$/, '')));
+            }
+            if (/^\d+(\.\d+)?ms$/.test(value)) return Math.round(parseFloat(value) * 1e6);
+            if (/^\d+(\.\d+)?s$/.test(value)) return Math.round(parseFloat(value) * 1e9);
+            return NaN;
+        }
         function updateManualControls(data) {
             window.manualExposureEnabled = !!data.manualExposure;
             window.manualExposureSupported = !!data.manualExposureSupported;
@@ -590,37 +656,42 @@
                 : 'MANUAL_SENSOR is unavailable until a compatible camera stream starts.';
             document.getElementById('manualSensorFields').style.display =
                 window.manualExposureSupported && window.manualExposureEnabled ? '' : 'none';
+            const minIso = Number(data.isoMin), maxIso = Number(data.isoMax);
+            const minNs = Number(data.shutterMinNs), maxNs = Number(data.shutterMaxNs);
+            if (!Number.isFinite(minNs) || !Number.isFinite(maxNs) || minNs <= 0 || maxNs < minNs) return;
+            manualSensorBounds = {isoMin:minIso, isoMax:maxIso, shutterMinNs:minNs, shutterMaxNs:maxNs};
             const iso = document.getElementById('manualIso');
-            iso.min = data.isoMin;
-            iso.max = data.isoMax;
-            iso.value = Math.max(data.isoMin, Math.min(data.isoMax, data.iso));
-            document.getElementById('manualIsoValue').textContent = iso.value;
-            const shutter = document.getElementById('manualShutter');
-            const minNs = data.shutterMinNs, maxNs = data.shutterMaxNs;
-            const durations = [15,24,25,30,50,60,100,120,125,200,250,500,1000,2000,4000,8000]
-                .map(n => ({ns: Math.round(1e9/n), label: '1/'+n+' s'}))
-                .filter(x => x.ns >= minNs && x.ns <= maxNs);
-            const current = Math.max(minNs, Math.min(maxNs, data.shutterSpeedNs));
-            durations.push({ns: current, label: 'Current'});
-            shutter.replaceChildren();
-            durations.forEach(item => {
-                const opt = document.createElement('option');
-                opt.value = item.ns;
-                opt.textContent = item.label;
-                shutter.appendChild(opt);
-            });
-            shutter.value = String(current);
+            const isoInput = document.getElementById('manualIsoInput');
+            iso.min = isoInput.min = minIso;
+            iso.max = isoInput.max = maxIso;
+            document.getElementById('manualShutterNote').textContent =
+                'Range: ' + shutterLabel(maxNs) + ' (slow) to ' + shutterLabel(minNs) +
+                ' (fast). Enter 1/50, 1/125, 20ms or 0.02s. FPS limits apply.';
+            if (window.manualControlDragging || manualSettingsInFlight > 0) return;
+            const currentIso = Math.max(minIso, Math.min(maxIso, data.iso));
+            iso.value = currentIso;
+            document.getElementById('manualIsoValue').textContent = currentIso;
+            if (document.activeElement !== isoInput) isoInput.value = currentIso;
+            const shutterNs = Math.max(minNs, Math.min(maxNs, data.shutterSpeedNs));
+            document.getElementById('manualShutterSlider').value = shutterToSlider(shutterNs);
+            const shutterInput = document.getElementById('manualShutterInput');
+            if (document.activeElement !== shutterInput) shutterInput.value = shutterLabel(shutterNs);
         }
-
         async function sendManualSetting(path, payload) {
-            const response = await fetch(path, {
-                method:'POST',
-                headers:{'Content-Type':'application/json'},
-                body: JSON.stringify(payload)
-            });
-            const data = await response.json();
-            if (!data.success) showMessage(data.message, false);
-            await checkCameraSettings();
+            manualSettingsInFlight++;
+            try {
+                const response = await fetch(path, {
+                    method:'POST',
+                    headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) throw new Error(data.message || ('HTTP '+response.status));
+                return true;
+            } finally {
+                manualSettingsInFlight--;
+                if (manualSettingsInFlight === 0) await checkCameraSettings();
+            }
         }
         async function toggleManualExposure() {
             try {
@@ -629,14 +700,117 @@
             } catch (e) { showMessage('Could not toggle manual exposure: '+e.message, false); }
         }
         async function setManualIso(value) {
-            try {
-                await sendManualSetting('/api/settings/iso', {iso: Number(value)});
-            } catch(e) { showMessage('Could not set ISO: '+e.message, false); }
+            const number = Number(value), b=manualSensorBounds;
+            if (!Number.isInteger(number) || number < b.isoMin || number > b.isoMax) {
+                showMessage('ISO must be a whole number from '+b.isoMin+' to '+b.isoMax, false);
+                return;
+            }
+            try { await sendManualSetting('/api/settings/iso', {iso: number}); }
+            catch(e) { showMessage('Could not set ISO: '+e.message, false); }
         }
-        async function setManualShutter(value) {
-            try {
-                await sendManualSetting('/api/settings/shutter', {nanoseconds: Number(value)});
-            } catch(e) { showMessage('Could not set shutter: '+e.message, false); }
+        function submitManualIsoInput(value) {
+            return setManualIso(value);
+        }
+        function previewManualShutter(position) {
+            document.getElementById('manualShutterInput').value = shutterLabel(sliderToShutter(position));
+        }
+        async function setManualShutterFromSlider(position) {
+            await setManualShutter(sliderToShutter(position));
+        }
+        async function submitManualShutterText(value) {
+            const ns = parseShutter(value), b=manualSensorBounds;
+            if (!Number.isSafeInteger(ns) || ns < b.shutterMinNs || ns > b.shutterMaxNs) {
+                showMessage('Shutter must be between '+shutterLabel(b.shutterMaxNs)+
+                    ' and '+shutterLabel(b.shutterMinNs)+' (enter 1/50 or 20ms)', false);
+                return;
+            }
+            await setManualShutter(ns);
+        }
+        async function setManualShutter(ns) {
+            try { await sendManualSetting('/api/settings/shutter', {nanoseconds: ns}); }
+            catch(e) { showMessage('Could not set shutter: '+e.message, false); }
+        }
+        function updateAdvancedControls(data) {
+            currentAdvancedStatus = data;
+            const show = !!data.streaming;
+            document.getElementById('additionalControls').style.display = show ? '' : 'none';
+            if (!show) return;
+            const whiteBalanceNames = {
+                0:'Off',1:'Auto',2:'Incandescent',3:'Fluorescent',4:'Warm fluorescent',
+                5:'Daylight',6:'Cloudy',7:'Twilight',8:'Shade'
+            };
+            const modes = (data.availableWhiteBalanceModes || [1]);
+            const white = document.getElementById('whiteBalanceSelect');
+            const choices = modes.join(',');
+            if (white.dataset.modes !== choices) {
+                white.replaceChildren();
+                modes.forEach(mode => {
+                    const opt=document.createElement('option');
+                    opt.value=mode; opt.textContent=whiteBalanceNames[mode]||('Mode '+mode);
+                    white.appendChild(opt);
+                });
+                white.dataset.modes=choices;
+            }
+            white.value=String(data.whiteBalance);
+            const lock=document.getElementById('whiteBalanceLockBtn');
+            lock.disabled= data.whiteBalance !== 1;
+            lock.textContent='AWB lock: '+(data.whiteBalanceLocked?'ON':'OFF');
+            lock.classList.toggle('active', !!data.whiteBalanceLocked);
+            const antiChoices = {0:'Off',1:'50 Hz',2:'60 Hz',3:'Auto'};
+            const antiModes = data.availableAntiBandingModes || [];
+            document.getElementById('antiBandRow').style.display = antiModes.length ? '' : 'none';
+            const anti=document.getElementById('antiBandSelect');
+            if (anti.dataset.modes !== antiModes.join(',')) {
+                anti.replaceChildren();
+                antiModes.forEach(mode => {
+                    const opt=document.createElement('option');
+                    opt.value=mode; opt.textContent=antiChoices[mode]||('Mode '+mode);
+                    anti.appendChild(opt);
+                });
+                anti.dataset.modes=antiModes.join(',');
+            }
+            if (antiModes.includes(data.antiBanding)) anti.value=String(data.antiBanding);
+            const supported= data.useAvc && Number(data.minFocusDistance)>0;
+            document.getElementById('focusGroup').style.display=supported?'':'none';
+            document.getElementById('focusUnavailableNote').style.display=supported?'none':'';
+            if (supported) {
+                const focusBtn=document.getElementById('autoFocusBtn');
+                focusBtn.textContent='Focus: '+(data.autoFocus?'Auto':'Manual');
+                focusBtn.classList.toggle('active', !data.autoFocus);
+                document.getElementById('manualFocusRow').style.display=data.autoFocus?'none':'';
+                const focusSlider=document.getElementById('manualFocusSlider');
+                if (document.activeElement!==focusSlider) focusSlider.value=data.focus;
+                document.getElementById('manualFocusValue').textContent=focusSlider.value+'%';
+            }
+            const aeBtn=document.getElementById('autoExposureBtn');
+            aeBtn.disabled=!!data.manualExposure;
+            aeBtn.textContent='AE lock: '+(data.autoExposure?'OFF':'ON');
+            aeBtn.classList.toggle('active', !data.autoExposure);
+            document.getElementById('exposureCard').style.display =
+                data.manualExposure ? 'none' : '';
+        }
+        async function changeAdvanced(path, payload) {
+            try { await sendManualSetting(path,payload); }
+            catch(e) { showMessage('Could not update camera: '+e.message,false); }
+        }
+        function setWhiteBalanceMode(value) {
+            return changeAdvanced('/api/settings/white-balance',{mode:Number(value)});
+        }
+        function toggleWhiteBalanceLock() {
+            return changeAdvanced('/api/settings/white-balance-lock',
+                {enabled:!currentAdvancedStatus.whiteBalanceLocked});
+        }
+        function setAntiBandMode(value) {
+            return changeAdvanced('/api/settings/anti-banding',{mode:Number(value)});
+        }
+        function toggleAutoFocusMode() {
+            return changeAdvanced('/api/settings/auto-focus',{enabled:!currentAdvancedStatus.autoFocus});
+        }
+        function setManualFocus(value) {
+            return changeAdvanced('/api/settings/focus',{focus:Number(value)});
+        }
+        function toggleAutoExposure() {
+            return changeAdvanced('/api/settings/auto-exposure',{enabled:!currentAdvancedStatus.autoExposure});
         }
 
         async function setExposure(exposure) {

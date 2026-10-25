@@ -75,6 +75,8 @@ class StreamStateHolder @Inject constructor() {
 
     private val _autoExposure = MutableStateFlow(true)
     val autoExposure: StateFlow<Boolean> = _autoExposure.asStateFlow()
+    private val _antiBanding = MutableStateFlow(3)
+    val antiBanding: StateFlow<Int> = _antiBanding.asStateFlow()
 
     private val _manualExposureEnabled = MutableStateFlow(false)
     val manualExposureEnabled: StateFlow<Boolean> = _manualExposureEnabled.asStateFlow()
@@ -118,6 +120,7 @@ class StreamStateHolder @Inject constructor() {
     fun setWhiteBalance(value: Int) { _whiteBalance.value = value }
     fun setWhiteBalanceLocked(value: Boolean) { _whiteBalanceLocked.value = value }
     fun setAutoExposure(value: Boolean) { _autoExposure.value = value }
+    fun setAntiBanding(value: Int) { _antiBanding.value = value }
     fun setManualExposureEnabled(value: Boolean) { _manualExposureEnabled.value = value }
     fun setIso(value: Int) { _iso.value = value.coerceAtLeast(1) }
     fun setIsoLocked(value: Boolean) { _isoLocked.value = value }

@@ -50,12 +50,21 @@ class CameraStateHolder @Inject constructor() {
     val shutterMinNs: StateFlow<Long> = _shutterMinNs
     private val _shutterMaxNs = MutableStateFlow(33_333_333L)
     val shutterMaxNs: StateFlow<Long> = _shutterMaxNs
+    private val _minFocusDistance = MutableStateFlow(0f)
+    val minFocusDistance: StateFlow<Float> = _minFocusDistance
+    private val _whiteBalanceModes = MutableStateFlow(listOf(1))
+    val whiteBalanceModes: StateFlow<List<Int>> = _whiteBalanceModes
+    private val _antiBandingModes = MutableStateFlow(listOf(3))
+    val antiBandingModes: StateFlow<List<Int>> = _antiBandingModes
 
     fun setManualExposureCapabilities(
         supported: Boolean,
         isoRange: android.util.Range<Int>?,
         exposureRange: android.util.Range<Long>?,
-        fps: Int
+        fps: Int,
+        lensMinFocusDistance: Float? = null,
+        availableAwbModes: IntArray? = null,
+        availableAntiBandingModes: IntArray? = null
     ) {
         val frameMaxNs = 1_000_000_000L / fps.coerceAtLeast(1)
         val minNs = exposureRange?.lower ?: 125_000L
@@ -66,6 +75,9 @@ class CameraStateHolder @Inject constructor() {
         _shutterMaxNs.value = maxOf(minNs, maxNs)
         _manualExposureSupported.value = supported && isoRange != null &&
             exposureRange != null && maxNs >= minNs
+        _minFocusDistance.value = (lensMinFocusDistance ?: 0f).coerceAtLeast(0f)
+        _whiteBalanceModes.value = availableAwbModes?.toList()?.takeIf { it.isNotEmpty() } ?: listOf(1)
+        _antiBandingModes.value = availableAntiBandingModes?.toList()?.takeIf { it.isNotEmpty() } ?: listOf(3)
     }
 
     private val _exposureMin = MutableStateFlow(0)
