@@ -273,7 +273,7 @@ fun CameraControlsSection(
                 SettingsToggle(
                     "Auto focus",
                     autoFocus,
-                    active && focusSupported,
+                    active && (focusSupported || !autoFocus),
                     onToggle = viewModel::setAutoFocus
                 )
                 if (active && !focusSupported) {

@@ -65,6 +65,7 @@ private const val ACTION_STOP = "com.example.handycam.ACTION_STOP"
 private const val ACTION_SET_CAMERA = "com.example.handycam.ACTION_SET_CAMERA"
 private const val ACTION_SET_PREVIEW_SURFACE = "com.example.handycam.ACTION_SET_PREVIEW_SURFACE"
 
+@OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
 @dagger.hilt.android.AndroidEntryPoint
 class StreamService : LifecycleService() {
     // AVC needs a deeper queue to absorb I-frame bursts without dropping reference frames.
