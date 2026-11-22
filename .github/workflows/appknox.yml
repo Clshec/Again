@@ -45,6 +45,17 @@ jobs:
       - name: Build the app
         run: ./gradlew build                                         # Update this to build your Android or iOS application
 
+      - name: Show Android lint failures
+        if: failure()
+        shell: bash
+        run: |
+          report="app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt"
+          if [ -f "$report" ]; then
+            grep -n -A 2 'Error:' "$report" || true
+          else
+            echo "No lint report generated"
+          fi
+
       - name: Appknox GitHub action
         uses: appknox/appknox-github-action@b7d2bfb2321d5544e97bffcba48557234ab953a4
         with:
