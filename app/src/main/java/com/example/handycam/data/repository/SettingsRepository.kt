@@ -1,6 +1,7 @@
 package com.example.handycam.data.repository
 
 import com.example.handycam.data.model.AppSettings
+import com.example.handycam.data.model.CameraControlSettings
 import com.example.handycam.data.model.StreamConfig
 import com.example.handycam.data.preferences.PreferencesManager
 import kotlinx.coroutines.flow.Flow
@@ -18,6 +19,10 @@ class SettingsRepository @Inject constructor(
     
     val appSettings: Flow<AppSettings> = preferencesManager.appSettingsFlow
     val streamConfig: Flow<StreamConfig> = preferencesManager.streamConfigFlow
+    val cameraControls: Flow<CameraControlSettings> = preferencesManager.cameraControlsFlow
+
+    suspend fun updateCameraControls(settings: CameraControlSettings) =
+        preferencesManager.updateCameraControls(settings)
 
     suspend fun updateHost(host: String) = preferencesManager.updateHost(host)
     
