@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 @HiltViewModel
 class CameraControlViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
