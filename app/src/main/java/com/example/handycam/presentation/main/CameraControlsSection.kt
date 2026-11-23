@@ -9,6 +9,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -88,7 +89,7 @@ fun CameraControlsSection(
                 SettingsToggle(
                     "Manual ISO + Shutter",
                     manual,
-                    active && manualSupported,
+                    active && (manualSupported || manual),
                     onToggle = viewModel::setManualExposureEnabled
                 )
                 if (active && !manualSupported) {
@@ -103,7 +104,7 @@ fun CameraControlsSection(
                     val maximumIso = isoMax.coerceAtLeast(minimumIso)
                     var isoDraft by remember { mutableStateOf(iso.toString()) }
                     var editingIso by remember { mutableStateOf(false) }
-                    LaunchedEffect(iso) {
+                    LaunchedEffect(iso, editingIso) {
                         if (!editingIso) isoDraft = iso.toString()
                     }
                     BoundedSlider(
@@ -127,7 +128,7 @@ fun CameraControlsSection(
                                 isoDraft = value.filter { it.isDigit() }.take(6)
                                 editingIso = true
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).onFocusChanged { if (!it.isFocused) editingIso = false },
                             label = { Text("Exact ISO ($minimumIso–$maximumIso)") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -150,7 +151,7 @@ fun CameraControlsSection(
                     val maximumShutter = shutterMax.coerceAtLeast(minimumShutter)
                     var shutterDraft by remember { mutableStateOf(shutterLabel(shutter)) }
                     var editingShutter by remember { mutableStateOf(false) }
-                    LaunchedEffect(shutter) {
+                    LaunchedEffect(shutter, editingShutter) {
                         if (!editingShutter) shutterDraft = shutterLabel(shutter)
                     }
                     BoundedSlider(
@@ -175,7 +176,7 @@ fun CameraControlsSection(
                         OutlinedTextField(
                             value = shutterDraft,
                             onValueChange = { shutterDraft = it.take(24); editingShutter = true },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).onFocusChanged { if (!it.isFocused) editingShutter = false },
                             label = { Text("Shutter (1/50, 20ms, 0.02s)") },
                             singleLine = true,
                             enabled = active,
