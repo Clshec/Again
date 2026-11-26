@@ -46,6 +46,7 @@ fun MainScreen(
     onNavigateToCameraControl: () -> Unit,
 ) {
     val isStreaming by viewModel.isStreaming.collectAsState()
+    val cameraSettingsReady by cameraControlsViewModel.settingsReady.collectAsState()
     val httpsRunning by viewModel.httpsRunning.collectAsState()
     val cameras by viewModel.availableCameras.collectAsState()
     val isScreenStreaming by viewModel.streamStateHolder.useScreenCapture.collectAsState()
@@ -162,6 +163,13 @@ fun MainScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Primary exposure controls are always visible at the top.
+            CameraControlsSection(
+                viewModel = cameraControlsViewModel,
+                cameraStreamActive = !isScreenSource,
+                exposureOnly = true
+            )
+
             // ── Connection ────────────────────────────────────────────
             SectionCard(title = "Connection") {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -406,6 +414,7 @@ fun MainScreen(
                         )
                     }
                 },
+                enabled = isStreaming || cameraSettingsReady,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 colors = if (isStreaming) ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error

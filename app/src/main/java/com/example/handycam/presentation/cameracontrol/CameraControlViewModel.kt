@@ -7,8 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.handycam.StreamService
 import com.example.handycam.data.model.CameraInfo
-import com.example.handycam.data.model.CameraControlSettings
-import com.example.handycam.data.repository.SettingsRepository
+import com.example.handycam.service.CameraControlPersistence
 import com.example.handycam.domain.usecase.GetAvailableCamerasUseCase
 import com.example.handycam.service.CameraStateHolder
 import com.example.handycam.service.StreamStateHolder
@@ -18,19 +17,19 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-@OptIn(kotlinx.coroutines.FlowPreview::class)
 @HiltViewModel
 class CameraControlViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     val streamStateHolder: StreamStateHolder,
     val cameraStateHolder: CameraStateHolder,
     private val getAvailableCamerasUseCase: GetAvailableCamerasUseCase,
-    private val settingsRepository: SettingsRepository,
+    cameraControlPersistence: CameraControlPersistence,
 ) : ViewModel() {
 
     @Volatile
     private var previewProviderToken: Long = 0L
 
+    val settingsReady: StateFlow<Boolean> = cameraControlPersistence.ready
     val isStreaming: StateFlow<Boolean> = streamStateHolder.isStreaming
     val torchEnabled: StateFlow<Boolean> = streamStateHolder.torchEnabled
     val exposure: StateFlow<Int> = streamStateHolder.exposure
@@ -70,50 +69,6 @@ class CameraControlViewModel @Inject constructor(
 
     init {
         viewModelScope.launch { _availableCameras.value = getAvailableCamerasUseCase() }
-        // Restore once; then observe ALL camera controls so browser-originated
-        // changes are saved too while this activity is alive.
-        viewModelScope.launch {
-            val saved = settingsRepository.cameraControls.first()
-            streamStateHolder.setManualExposureEnabled(saved.manualExposureEnabled)
-            streamStateHolder.setIso(saved.iso)
-            streamStateHolder.setShutterSpeedNs(saved.shutterSpeedNs)
-            streamStateHolder.setAutoExposure(saved.autoExposure)
-            streamStateHolder.setAutoFocus(saved.autoFocus)
-            streamStateHolder.setFocus(saved.focus)
-            streamStateHolder.setWhiteBalance(saved.whiteBalance)
-            streamStateHolder.setWhiteBalanceLocked(saved.whiteBalanceLocked && saved.whiteBalance == 1)
-            streamStateHolder.setAntiBanding(saved.antiBanding)
-            streamStateHolder.setZoom(saved.zoom)
-
-            val flows: List<Flow<Any>> = listOf(
-                streamStateHolder.manualExposureEnabled,
-                streamStateHolder.iso,
-                streamStateHolder.shutterSpeedNs,
-                streamStateHolder.autoExposure,
-                streamStateHolder.autoFocus,
-                streamStateHolder.focus,
-                streamStateHolder.whiteBalance,
-                streamStateHolder.whiteBalanceLocked,
-                streamStateHolder.antiBanding,
-                streamStateHolder.zoom
-            )
-            combine(flows) { states: Array<Any> ->
-                CameraControlSettings(
-                    manualExposureEnabled = states[0] as Boolean,
-                    iso = states[1] as Int,
-                    shutterSpeedNs = states[2] as Long,
-                    autoExposure = states[3] as Boolean,
-                    autoFocus = states[4] as Boolean,
-                    focus = states[5] as Int,
-                    whiteBalance = states[6] as Int,
-                    whiteBalanceLocked = states[7] as Boolean,
-                    antiBanding = states[8] as Int,
-                    zoom = states[9] as Float
-                )
-            }.drop(1).debounce(400).distinctUntilChanged().collect {
-                settingsRepository.updateCameraControls(it)
-            }
-        }
     }
 
     fun toggleTorch() {
@@ -173,7 +128,8 @@ class CameraControlViewModel @Inject constructor(
     }
 
     fun setManualExposureEnabled(enabled: Boolean) {
-        if (enabled && !cameraStateHolder.manualExposureSupported.value) return
+        if (!settingsReady.value) return
+        if (enabled && isStreaming.value && !cameraStateHolder.manualExposureSupported.value) return
         streamStateHolder.setManualExposureEnabled(enabled)
     }
 

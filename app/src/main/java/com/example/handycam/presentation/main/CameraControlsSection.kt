@@ -30,6 +30,7 @@ import kotlin.math.roundToLong
 fun CameraControlsSection(
     viewModel: CameraControlViewModel,
     cameraStreamActive: Boolean,
+    exposureOnly: Boolean = false,
 ) {
     val streaming by viewModel.isStreaming.collectAsState()
     val useAvc by viewModel.useAvc.collectAsState()
@@ -56,7 +57,9 @@ fun CameraControlsSection(
     val zoom by viewModel.zoom.collectAsState()
     val torch by viewModel.torchEnabled.collectAsState()
     var expanded by rememberSaveable { mutableStateOf(true) }
-    val active = streaming && cameraStreamActive
+    val ready by viewModel.settingsReady.collectAsState()
+    val active = ready && streaming && cameraStreamActive
+    val editableExposure = active && manual && manualSupported
 
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -65,245 +68,247 @@ fun CameraControlsSection(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Camera Controls",
+                    if (exposureOnly) "ISO & Shutter" else "Camera Controls",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
-                TextButton(onClick = { expanded = !expanded }) {
-                    Text(if (expanded) "Hide" else "Show")
+                if (!exposureOnly) {
+                    TextButton(onClick = { expanded = !expanded }) {
+                        Text(if (expanded) "Hide" else "Show")
+                    }
                 }
             }
-            if (expanded) {
+            if (exposureOnly || expanded) {
                 Text(
                     if (active) "Changes apply to the running camera stream without restarting OBS."
                     else "Start a camera stream to enable sensor controls. No preview or web server is required.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                SettingsToggle("Torch", torch, active, onToggle = {
-                    viewModel.toggleTorch()
-                })
-
-                HorizontalDivider()
-                SettingsToggle(
-                    "Manual ISO + Shutter",
-                    manual,
-                    active && (manualSupported || manual),
-                    onToggle = viewModel::setManualExposureEnabled
-                )
-                if (active && !manualSupported) {
-                    Text(
-                        "This camera or streaming mode does not expose Camera2 MANUAL_SENSOR.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                if (exposureOnly) {
+                    SettingsToggle(
+                        "Manual ISO + Shutter",
+                        manual,
+                        ready && cameraStreamActive && (!streaming || manualSupported || manual),
+                        onToggle = viewModel::setManualExposureEnabled
                     )
-                }
-                if (manual && manualSupported) {
-                    val minimumIso = isoMin.coerceAtLeast(1)
-                    val maximumIso = isoMax.coerceAtLeast(minimumIso)
-                    var isoDraft by remember { mutableStateOf(iso.toString()) }
-                    var editingIso by remember { mutableStateOf(false) }
-                    LaunchedEffect(iso, editingIso) {
-                        if (!editingIso) isoDraft = iso.toString()
-                    }
-                    BoundedSlider(
-                        title = "ISO",
-                        value = iso.toFloat(),
-                        low = minimumIso.toFloat(),
-                        high = maximumIso.toFloat(),
-                        enabled = active && maximumIso > minimumIso,
-                        formatValue = { it.roundToInt().toString() },
-                        onCommit = {
-                            viewModel.setIso(it.roundToInt().coerceIn(minimumIso, maximumIso))
-                        }
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = isoDraft,
-                            onValueChange = { value ->
-                                isoDraft = value.filter { it.isDigit() }.take(6)
-                                editingIso = true
-                            },
-                            modifier = Modifier.weight(1f).onFocusChanged { if (!it.isFocused) editingIso = false },
-                            label = { Text("Exact ISO ($minimumIso–$maximumIso)") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            enabled = active,
-                            isError = isoDraft.toIntOrNull()?.let {
-                                it !in minimumIso..maximumIso
-                            } ?: false
+                    if (active && !manualSupported) {
+                        Text(
+                            "This camera or streaming mode does not expose Camera2 MANUAL_SENSOR.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Button(
-                            enabled = active && (isoDraft.toIntOrNull()?.let { it in minimumIso..maximumIso } == true),
-                            onClick = {
-                                val next = isoDraft.toIntOrNull() ?: return@Button
-                                viewModel.setIso(next)
-                                editingIso = false
+                    }
+                    run {
+                        val minimumIso = (if (manualSupported) isoMin else minOf(isoMin, iso)).coerceAtLeast(1)
+                        val maximumIso = (if (manualSupported) isoMax else maxOf(isoMax, iso)).coerceAtLeast(minimumIso)
+                        var isoDraft by remember { mutableStateOf(iso.toString()) }
+                        var editingIso by remember { mutableStateOf(false) }
+                        LaunchedEffect(iso, editingIso) {
+                            if (!editingIso) isoDraft = iso.toString()
+                        }
+                        BoundedSlider(
+                            title = "ISO",
+                            value = iso.toFloat(),
+                            low = minimumIso.toFloat(),
+                            high = maximumIso.toFloat(),
+                            enabled = editableExposure && maximumIso > minimumIso,
+                            formatValue = { it.roundToInt().toString() },
+                            onCommit = {
+                                viewModel.setIso(it.roundToInt().coerceIn(minimumIso, maximumIso))
                             }
-                        ) { Text("Set") }
-                    }
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = isoDraft,
+                                onValueChange = { value ->
+                                    isoDraft = value.filter { it.isDigit() }.take(6)
+                                    editingIso = true
+                                },
+                                modifier = Modifier.weight(1f).onFocusChanged { if (!it.isFocused) editingIso = false },
+                                label = { Text("Exact ISO ($minimumIso–$maximumIso)") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                enabled = editableExposure,
+                                isError = isoDraft.toIntOrNull()?.let {
+                                    it !in minimumIso..maximumIso
+                                } ?: false
+                            )
+                            Button(
+                                enabled = editableExposure && (isoDraft.toIntOrNull()?.let { it in minimumIso..maximumIso } == true),
+                                onClick = {
+                                    val next = isoDraft.toIntOrNull() ?: return@Button
+                                    viewModel.setIso(next)
+                                    editingIso = false
+                                }
+                            ) { Text("Set") }
+                        }
 
-                    val minimumShutter = shutterMin.coerceAtLeast(1L)
-                    val maximumShutter = shutterMax.coerceAtLeast(minimumShutter)
-                    var shutterDraft by remember { mutableStateOf(shutterLabel(shutter)) }
-                    var editingShutter by remember { mutableStateOf(false) }
-                    LaunchedEffect(shutter, editingShutter) {
-                        if (!editingShutter) shutterDraft = shutterLabel(shutter)
+                        val minimumShutter = (if (manualSupported) shutterMin else minOf(shutterMin, shutter)).coerceAtLeast(1L)
+                        val maximumShutter = (if (manualSupported) shutterMax else maxOf(shutterMax, shutter)).coerceAtLeast(minimumShutter)
+                        var shutterDraft by remember { mutableStateOf(shutterLabel(shutter)) }
+                        var editingShutter by remember { mutableStateOf(false) }
+                        LaunchedEffect(shutter, editingShutter) {
+                            if (!editingShutter) shutterDraft = shutterLabel(shutter)
+                        }
+                        BoundedSlider(
+                            title = "Shutter",
+                            value = shutterPosition(shutter, minimumShutter, maximumShutter),
+                            low = 0f,
+                            high = 1f,
+                            enabled = editableExposure && maximumShutter > minimumShutter,
+                            formatValue = { position ->
+                                shutterLabel(shutterFromPosition(position, minimumShutter, maximumShutter))
+                            },
+                            onCommit = { position ->
+                                viewModel.setShutterSpeedNs(
+                                    shutterFromPosition(position, minimumShutter, maximumShutter)
+                                )
+                            }
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = shutterDraft,
+                                onValueChange = { shutterDraft = it.take(24); editingShutter = true },
+                                modifier = Modifier.weight(1f).onFocusChanged { if (!it.isFocused) editingShutter = false },
+                                label = { Text("Shutter (1/50, 20ms, 0.02s)") },
+                                singleLine = true,
+                                enabled = editableExposure,
+                                isError = parseShutter(shutterDraft)?.let {
+                                    it !in minimumShutter..maximumShutter
+                                } ?: false
+                            )
+                            Button(
+                                enabled = editableExposure && (
+                                    parseShutter(shutterDraft)?.let {
+                                        it in minimumShutter..maximumShutter
+                                    } == true
+                                ),
+                                onClick = {
+                                    val next = parseShutter(shutterDraft) ?: return@Button
+                                    viewModel.setShutterSpeedNs(next)
+                                    editingShutter = false
+                                }
+                            ) { Text("Set") }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(50, 100, 250, 500).forEach { denominator ->
+                                val speed = 1_000_000_000L / denominator
+                                if (speed in minimumShutter..maximumShutter) {
+                                    OutlinedButton(
+                                        enabled = editableExposure,
+                                        onClick = { viewModel.setShutterSpeedNs(speed) }
+                                    ) { Text("1/$denominator") }
+                                }
+                            }
+                        }
                     }
-                    BoundedSlider(
-                        title = "Shutter",
-                        value = shutterPosition(shutter, minimumShutter, maximumShutter),
-                        low = 0f,
-                        high = 1f,
-                        enabled = active && maximumShutter > minimumShutter,
-                        formatValue = { position ->
-                            shutterLabel(shutterFromPosition(position, minimumShutter, maximumShutter))
-                        },
-                        onCommit = { position ->
-                            viewModel.setShutterSpeedNs(
-                                shutterFromPosition(position, minimumShutter, maximumShutter)
+                    if (!manual) {
+                        SettingsToggle(
+                            "AE lock",
+                            !autoExposure,
+                            active,
+                            onToggle = { viewModel.setAutoExposure(!it) }
+                        )
+                        if (exposureMax > exposureMin) {
+                            BoundedSlider(
+                                title = "Exposure compensation (EV)",
+                                value = exposure.toFloat(),
+                                low = exposureMin.toFloat(),
+                                high = exposureMax.toFloat(),
+                                enabled = active,
+                                formatValue = { it.roundToInt().toString() },
+                                onCommit = { viewModel.setExposure(it.roundToInt()) }
                             )
                         }
+                    }
+
+                } else {
+                    SettingsToggle("Torch", torch, active, onToggle = { viewModel.toggleTorch() })
+                    HorizontalDivider()
+                    val whiteBalanceLabels = mapOf(
+                        1 to "Auto", 2 to "Incandescent", 3 to "Fluorescent",
+                        4 to "Warm fluorescent", 5 to "Daylight",
+                        6 to "Cloudy daylight", 7 to "Twilight", 8 to "Shade"
                     )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = shutterDraft,
-                            onValueChange = { shutterDraft = it.take(24); editingShutter = true },
-                            modifier = Modifier.weight(1f).onFocusChanged { if (!it.isFocused) editingShutter = false },
-                            label = { Text("Shutter (1/50, 20ms, 0.02s)") },
-                            singleLine = true,
-                            enabled = active,
-                            isError = parseShutter(shutterDraft)?.let {
-                                it !in minimumShutter..maximumShutter
-                            } ?: false
-                        )
-                        Button(
-                            enabled = active && (
-                                parseShutter(shutterDraft)?.let {
-                                    it in minimumShutter..maximumShutter
-                                } == true
-                            ),
-                            onClick = {
-                                val next = parseShutter(shutterDraft) ?: return@Button
-                                viewModel.setShutterSpeedNs(next)
-                                editingShutter = false
-                            }
-                        ) { Text("Set") }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        listOf(50, 100, 250, 500).forEach { denominator ->
-                            val speed = 1_000_000_000L / denominator
-                            if (speed in minimumShutter..maximumShutter) {
-                                OutlinedButton(
-                                    enabled = active,
-                                    onClick = { viewModel.setShutterSpeedNs(speed) }
-                                ) { Text("1/$denominator") }
-                            }
-                        }
-                    }
-                } else if (!manual) {
+                    CameraOptionMenu(
+                        title = "White balance",
+                        current = whiteBalance,
+                        options = supportedWhiteBalance.map {
+                            it to (whiteBalanceLabels[it] ?: "Mode $it")
+                        },
+                        enabled = active && !whiteBalanceLocked,
+                        onChoose = viewModel::setWhiteBalance
+                    )
                     SettingsToggle(
-                        "AE lock",
-                        !autoExposure,
-                        active,
-                        onToggle = { viewModel.setAutoExposure(!it) }
+                        "AWB lock",
+                        whiteBalanceLocked,
+                        active && whiteBalance == 1,
+                        onToggle = viewModel::setWhiteBalanceLocked
                     )
-                    if (exposureMax > exposureMin) {
-                        BoundedSlider(
-                            title = "Exposure compensation (EV)",
-                            value = exposure.toFloat(),
-                            low = exposureMin.toFloat(),
-                            high = exposureMax.toFloat(),
-                            enabled = active,
-                            formatValue = { it.roundToInt().toString() },
-                            onCommit = { viewModel.setExposure(it.roundToInt()) }
+
+                    CameraOptionMenu(
+                        title = "Anti-flicker",
+                        current = antiBanding,
+                        options = supportedAntiBanding.map {
+                            it to when (it) {
+                                0 -> "Off"
+                                1 -> "50 Hz"
+                                2 -> "60 Hz"
+                                3 -> "Auto"
+                                else -> "Mode $it"
+                            }
+                        },
+                        enabled = active,
+                        onChoose = viewModel::setAntiBanding
+                    )
+
+                    HorizontalDivider()
+                    val focusSupported = useAvc && minFocusDistance > 0f
+                    SettingsToggle(
+                        "Auto focus",
+                        autoFocus,
+                        active && (focusSupported || !autoFocus),
+                        onToggle = viewModel::setAutoFocus
+                    )
+                    if (active && !focusSupported) {
+                        Text(
+                            "Manual focus is available in H.264 on compatible lenses.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                }
-
-                HorizontalDivider()
-                val whiteBalanceLabels = mapOf(
-                    1 to "Auto", 2 to "Incandescent", 3 to "Fluorescent",
-                    4 to "Warm fluorescent", 5 to "Daylight",
-                    6 to "Cloudy daylight", 7 to "Twilight", 8 to "Shade"
-                )
-                CameraOptionMenu(
-                    title = "White balance",
-                    current = whiteBalance,
-                    options = supportedWhiteBalance.map {
-                        it to (whiteBalanceLabels[it] ?: "Mode $it")
-                    },
-                    enabled = active && !whiteBalanceLocked,
-                    onChoose = viewModel::setWhiteBalance
-                )
-                SettingsToggle(
-                    "AWB lock",
-                    whiteBalanceLocked,
-                    active && whiteBalance == 1,
-                    onToggle = viewModel::setWhiteBalanceLocked
-                )
-
-                CameraOptionMenu(
-                    title = "Anti-flicker",
-                    current = antiBanding,
-                    options = supportedAntiBanding.map {
-                        it to when (it) {
-                            0 -> "Off"
-                            1 -> "50 Hz"
-                            2 -> "60 Hz"
-                            3 -> "Auto"
-                            else -> "Mode $it"
-                        }
-                    },
-                    enabled = active,
-                    onChoose = viewModel::setAntiBanding
-                )
-
-                HorizontalDivider()
-                val focusSupported = useAvc && minFocusDistance > 0f
-                SettingsToggle(
-                    "Auto focus",
-                    autoFocus,
-                    active && (focusSupported || !autoFocus),
-                    onToggle = viewModel::setAutoFocus
-                )
-                if (active && !focusSupported) {
-                    Text(
-                        "Manual focus is available in H.264 on compatible lenses.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                if (!autoFocus && focusSupported) {
+                    if (!autoFocus && focusSupported) {
+                        BoundedSlider(
+                            title = "Manual focus",
+                            value = focus.toFloat(),
+                            low = 0f,
+                            high = 100f,
+                            enabled = active,
+                            formatValue = { "${it.roundToInt()}%" },
+                            onCommit = { viewModel.setFocus(it.roundToInt()) }
+                        )
+                    }
                     BoundedSlider(
-                        title = "Manual focus",
-                        value = focus.toFloat(),
+                        title = "Zoom",
+                        value = zoom * 100f,
                         low = 0f,
                         high = 100f,
                         enabled = active,
                         formatValue = { "${it.roundToInt()}%" },
-                        onCommit = { viewModel.setFocus(it.roundToInt()) }
+                        onCommit = { viewModel.setZoom(it / 100f) }
                     )
                 }
-                BoundedSlider(
-                    title = "Zoom",
-                    value = zoom * 100f,
-                    low = 0f,
-                    high = 100f,
-                    enabled = active,
-                    formatValue = { "${it.roundToInt()}%" },
-                    onCommit = { viewModel.setZoom(it / 100f) }
-                )
             }
         }
     }
