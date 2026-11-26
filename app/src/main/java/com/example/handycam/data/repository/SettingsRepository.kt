@@ -28,6 +28,8 @@ class SettingsRepository @Inject constructor(
     
     suspend fun updateStreamingPort(port: Int) = preferencesManager.updateStreamingPort(port)
     
+    suspend fun updateHttpPort(port: Int) = preferencesManager.updateHttpPort(port)
+
     suspend fun updateCamera(camera: String) = preferencesManager.updateCamera(camera)
     
     suspend fun updateStreamingState(isStreaming: Boolean) = 

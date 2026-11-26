@@ -37,9 +37,11 @@ fun CameraControlsSection(
     val manualSupported by viewModel.manualExposureSupported.collectAsState()
     val manual by viewModel.manualExposureEnabled.collectAsState()
     val iso by viewModel.iso.collectAsState()
+    val isoLocked by viewModel.isoLocked.collectAsState()
     val isoMin by viewModel.isoMin.collectAsState()
     val isoMax by viewModel.isoMax.collectAsState()
     val shutter by viewModel.shutterSpeedNs.collectAsState()
+    val shutterLocked by viewModel.shutterLocked.collectAsState()
     val shutterMin by viewModel.shutterMinNs.collectAsState()
     val shutterMax by viewModel.shutterMaxNs.collectAsState()
     val autoExposure by viewModel.autoExposure.collectAsState()
@@ -63,29 +65,27 @@ fun CameraControlsSection(
 
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (exposureOnly) "ISO & Shutter" else "Camera Controls",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f)
-                )
-                if (!exposureOnly) {
-                    TextButton(onClick = { expanded = !expanded }) {
+            if (!exposureOnly) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Camera Controls",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        onClick = { expanded = !expanded },
+                        modifier = Modifier.height(44.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
                         Text(if (expanded) "Hide" else "Show")
                     }
                 }
             }
             if (exposureOnly || expanded) {
-                Text(
-                    if (active) "Changes apply to the running camera stream without restarting OBS."
-                    else "Start a camera stream to enable sensor controls. No preview or web server is required.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
                 if (exposureOnly) {
                     SettingsToggle(
                         "Manual ISO + Shutter",
@@ -93,6 +93,13 @@ fun CameraControlsSection(
                         ready && cameraStreamActive && (!streaming || manualSupported || manual),
                         onToggle = viewModel::setManualExposureEnabled
                     )
+                    if (!active) {
+                        Text(
+                            if (!ready) "Loading saved settings..." else "Start streaming to edit. Values are saved automatically.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     if (active && !manualSupported) {
                         Text(
                             "This camera or streaming mode does not expose Camera2 MANUAL_SENSOR.",
@@ -101,6 +108,14 @@ fun CameraControlsSection(
                         )
                     }
                     run {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(Modifier.weight(1f)) {
+                                SettingsToggle("ISO lock", isoLocked, active, viewModel::setIsoLocked)
+                            }
+                            Box(Modifier.weight(1f)) {
+                                SettingsToggle("Shutter lock", shutterLocked, active, viewModel::setShutterLocked)
+                            }
+                        }
                         val minimumIso = (if (manualSupported) isoMin else minOf(isoMin, iso)).coerceAtLeast(1)
                         val maximumIso = (if (manualSupported) isoMax else maxOf(isoMax, iso)).coerceAtLeast(minimumIso)
                         var isoDraft by remember { mutableStateOf(iso.toString()) }
@@ -113,7 +128,7 @@ fun CameraControlsSection(
                             value = iso.toFloat(),
                             low = minimumIso.toFloat(),
                             high = maximumIso.toFloat(),
-                            enabled = editableExposure && maximumIso > minimumIso,
+                            enabled = editableExposure && !isoLocked && maximumIso > minimumIso,
                             formatValue = { it.roundToInt().toString() },
                             onCommit = {
                                 viewModel.setIso(it.roundToInt().coerceIn(minimumIso, maximumIso))
@@ -121,7 +136,7 @@ fun CameraControlsSection(
                         )
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             OutlinedTextField(
                                 value = isoDraft,
@@ -129,17 +144,19 @@ fun CameraControlsSection(
                                     isoDraft = value.filter { it.isDigit() }.take(6)
                                     editingIso = true
                                 },
-                                modifier = Modifier.weight(1f).onFocusChanged { if (!it.isFocused) editingIso = false },
+                                modifier = Modifier.weight(1f).height(54.dp).onFocusChanged { if (!it.isFocused) editingIso = false },
                                 label = { Text("Exact ISO ($minimumIso–$maximumIso)") },
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                enabled = editableExposure,
+                                enabled = editableExposure && !isoLocked,
                                 isError = isoDraft.toIntOrNull()?.let {
                                     it !in minimumIso..maximumIso
                                 } ?: false
                             )
                             Button(
-                                enabled = editableExposure && (isoDraft.toIntOrNull()?.let { it in minimumIso..maximumIso } == true),
+                                modifier = Modifier.height(44.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                enabled = editableExposure && !isoLocked && (isoDraft.toIntOrNull()?.let { it in minimumIso..maximumIso } == true),
                                 onClick = {
                                     val next = isoDraft.toIntOrNull() ?: return@Button
                                     viewModel.setIso(next)
@@ -160,7 +177,7 @@ fun CameraControlsSection(
                             value = shutterPosition(shutter, minimumShutter, maximumShutter),
                             low = 0f,
                             high = 1f,
-                            enabled = editableExposure && maximumShutter > minimumShutter,
+                            enabled = editableExposure && !shutterLocked && maximumShutter > minimumShutter,
                             formatValue = { position ->
                                 shutterLabel(shutterFromPosition(position, minimumShutter, maximumShutter))
                             },
@@ -172,21 +189,23 @@ fun CameraControlsSection(
                         )
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             OutlinedTextField(
                                 value = shutterDraft,
                                 onValueChange = { shutterDraft = it.take(24); editingShutter = true },
-                                modifier = Modifier.weight(1f).onFocusChanged { if (!it.isFocused) editingShutter = false },
+                                modifier = Modifier.weight(1f).height(54.dp).onFocusChanged { if (!it.isFocused) editingShutter = false },
                                 label = { Text("Shutter (1/50, 20ms, 0.02s)") },
                                 singleLine = true,
-                                enabled = editableExposure,
+                                enabled = editableExposure && !shutterLocked,
                                 isError = parseShutter(shutterDraft)?.let {
                                     it !in minimumShutter..maximumShutter
                                 } ?: false
                             )
                             Button(
-                                enabled = editableExposure && (
+                                modifier = Modifier.height(44.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                enabled = editableExposure && !shutterLocked && (
                                     parseShutter(shutterDraft)?.let {
                                         it in minimumShutter..maximumShutter
                                     } == true
@@ -200,13 +219,15 @@ fun CameraControlsSection(
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             listOf(50, 100, 250, 500).forEach { denominator ->
                                 val speed = 1_000_000_000L / denominator
                                 if (speed in minimumShutter..maximumShutter) {
                                     OutlinedButton(
-                                        enabled = editableExposure,
+                                        modifier = Modifier.height(44.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                        enabled = editableExposure && !shutterLocked,
                                         onClick = { viewModel.setShutterSpeedNs(speed) }
                                     ) { Text("1/$denominator") }
                                 }
@@ -323,7 +344,12 @@ private fun SettingsToggle(
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        Switch(checked = checked, onCheckedChange = onToggle, enabled = enabled)
+        Switch(
+            checked = checked,
+            onCheckedChange = onToggle,
+            enabled = enabled,
+            modifier = Modifier.height(44.dp)
+        )
     }
 }
 
@@ -340,6 +366,8 @@ private fun CameraOptionMenu(
         Text(title, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         Box {
             OutlinedButton(
+                modifier = Modifier.height(44.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 onClick = { open = true },
                 enabled = enabled && options.isNotEmpty()
             ) {
@@ -377,12 +405,17 @@ private fun BoundedSlider(
     LaunchedEffect(value, low, safeHigh) {
         if (!dragging) position = value.coerceIn(low, safeHigh)
     }
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.weight(0.38f)) {
+            Text(title, style = MaterialTheme.typography.bodySmall)
             Text(formatValue(position), style = MaterialTheme.typography.labelMedium)
         }
         Slider(
+            modifier = Modifier.weight(0.62f).height(44.dp),
             value = position.coerceIn(low, maxOf(low + 0.0001f, safeHigh)),
             onValueChange = { position = it; dragging = true },
             onValueChangeFinished = {

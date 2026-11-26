@@ -33,6 +33,8 @@ class MainViewModel @Inject constructor(
 
     val isStreaming: StateFlow<Boolean> = streamStateHolder.isStreaming
     val httpsRunning: StateFlow<Boolean> = streamStateHolder.httpsRunning
+    private val _settingsReady = MutableStateFlow(false)
+    val settingsReady = _settingsReady.asStateFlow()
 
     private val _availableCameras = MutableStateFlow<List<CameraInfo>>(emptyList())
     val availableCameras: StateFlow<List<CameraInfo>> = _availableCameras.asStateFlow()
@@ -41,6 +43,7 @@ class MainViewModel @Inject constructor(
     val uiEvent: SharedFlow<UiEvent> = _uiEvent.asSharedFlow()
 
     val localIp: String get() = getLocalIpAddress() ?: "0.0.0.0"
+    val stableHost: String get() = com.example.handycam.stableCameraHost(context)
 
     init {
         viewModelScope.launch { _availableCameras.value = getAvailableCamerasUseCase() }
@@ -48,10 +51,9 @@ class MainViewModel @Inject constructor(
             val settings = settingsRepository.appSettings.first()
             streamStateHolder.setHost(settings.host)
             streamStateHolder.setStreamingPort(settings.streamingPort)
+            streamStateHolder.setHttpPort(settings.httpPort)
             streamStateHolder.setCamera(settings.camera)
             streamStateHolder.setUseScreenCapture(settings.useScreenCapture)
-        }
-        viewModelScope.launch {
             val config = settingsRepository.streamConfig.first()
             streamStateHolder.setWidth(config.width)
             streamStateHolder.setHeight(config.height)
@@ -59,6 +61,7 @@ class MainViewModel @Inject constructor(
             streamStateHolder.setFps(config.fps)
             streamStateHolder.setUseAvc(config.useAvc)
             streamStateHolder.setAvcBitrate(config.avcBitrate ?: -1)
+            _settingsReady.value = true
         }
     }
 
@@ -78,7 +81,7 @@ class MainViewModel @Inject constructor(
     ) {
         viewModelScope.launch {
             val config = StreamConfig(width, height, camera, jpegQuality, fps, useAvc, avcBitrate)
-            startStreamUseCase(host, port, camera, config)
+            if (startStreamUseCase(host, port, camera, config).isFailure) return@launch
 
             val intent = Intent(context, StreamService::class.java).apply {
                 action = "com.example.handycam.ACTION_START"
@@ -98,6 +101,7 @@ class MainViewModel @Inject constructor(
                 }
             }
             context.startForegroundService(intent)
+            if (!useScreenCapture && !httpsRunning.value) startHttpsServer(streamStateHolder.httpPort.value)
         }
     }
 
@@ -116,6 +120,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun updateStreamingPort(port: Int) {
+        if (port !in 1..65535 || port == streamStateHolder.httpPort.value) return
         streamStateHolder.setStreamingPort(port)
         viewModelScope.launch { settingsRepository.updateStreamingPort(port) }
     }
@@ -156,7 +161,15 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.updateUseScreenCapture(useScreenCapture) }
     }
 
+    fun updateHttpPort(port: Int) {
+        if (port !in 1..65535 || port == streamStateHolder.streamingPort.value) return
+        streamStateHolder.setHttpPort(port)
+        viewModelScope.launch { settingsRepository.updateHttpPort(port) }
+    }
+
     fun startHttpsServer(port: Int) {
+        if (port !in 1..65535 || port == streamStateHolder.streamingPort.value) return
+        updateHttpPort(port)
         val intent = Intent(context, KtorHttpServerService::class.java).apply {
             action = "com.example.handycam.ACTION_START_HTTPS_SERVER"
             putExtra("httpPort", port)
@@ -179,6 +192,13 @@ class MainViewModel @Inject constructor(
 
     private fun getLocalIpAddress(): String? {
         return try {
+            @Suppress("DEPRECATION")
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+            @Suppress("DEPRECATION")
+            val wifiIp = wifi.connectionInfo.ipAddress
+            if (wifiIp != 0) {
+                return (0..3).joinToString(".") { ((wifiIp shr (8 * it)) and 0xff).toString() }
+            }
             val candidates = mutableListOf<String>()
             for (iface in NetworkInterface.getNetworkInterfaces()) {
                 if (!iface.isUp || iface.isLoopback) continue

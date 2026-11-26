@@ -47,7 +47,9 @@ class KtorHttpServerService : LifecycleService() {
     
     private var server: NettyApplicationEngine? = null
     private var httpPort = 8080
-    private var isRunning = false
+    @Volatile private var isRunning = false
+    @Volatile private var starting = false
+    @javax.inject.Inject lateinit var settingsRepository: com.example.handycam.data.repository.SettingsRepository
     @javax.inject.Inject lateinit var streamStateHolder: com.example.handycam.service.StreamStateHolder
     @javax.inject.Inject lateinit var cameraStateHolder: com.example.handycam.service.CameraStateHolder
     
@@ -63,8 +65,11 @@ class KtorHttpServerService : LifecycleService() {
         
         when (intent?.action) {
             ACTION_START_SERVER -> {
-                httpPort = intent.getIntExtra("httpPort", 8443)
-                startHttpServer()
+                if (!isRunning && !starting) {
+                    httpPort = intent.getIntExtra("httpPort", 8080)
+                    streamStateHolder.setHttpPort(httpPort)
+                    startHttpServer()
+                }
             }
             ACTION_STOP_SERVER -> {
                 stopHttpServer()
@@ -127,10 +132,12 @@ class KtorHttpServerService : LifecycleService() {
     }
 
     private fun startHttpServer() {
-        if (isRunning) {
+        if (isRunning || starting) {
             Log.w(TAG, "Server already running")
             return
         }
+        starting = true
+        startForeground(NOTIF_ID, buildNotification("Starting HTTP server"))
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 // startTime = System.currentTimeMillis()
@@ -162,7 +169,11 @@ class KtorHttpServerService : LifecycleService() {
                 isRunning = false
                 launch(Dispatchers.Main) {
                     broadcastServerState(false)
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
                 }
+            } finally {
+                starting = false
             }
         }
     }
@@ -431,6 +442,7 @@ class KtorHttpServerService : LifecycleService() {
                     }
                     startService(intent)
                     streamStateHolder.setCamera(camera)
+                    settingsRepository.updateCamera(camera)
                     call.respond(ApiResponse(true, "Switched to $camera camera"))
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.InternalServerError, ApiResponse(false, "Failed to switch camera: ${e.message}"))
@@ -443,6 +455,7 @@ class KtorHttpServerService : LifecycleService() {
                     val params = call.receive<Map<String, Int>>()
                     val fps = params["fps"] ?: 30
                     streamStateHolder.setFps(fps)
+                    settingsRepository.updateFps(fps)
                     call.respond(ApiResponse(true, "FPS updated to $fps"))
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.BadRequest, ApiResponse(false, "Invalid FPS value: ${e.message}"))
@@ -456,6 +469,7 @@ class KtorHttpServerService : LifecycleService() {
                     val height = params["height"] ?: 1920
                     streamStateHolder.setWidth(width)
                     streamStateHolder.setHeight(height)
+                    settingsRepository.updateResolution(width, height)
                     call.respond(ApiResponse(true, "Resolution updated to ${width}x${height}"))
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.BadRequest, ApiResponse(false, "Invalid resolution: ${e.message}"))
@@ -467,6 +481,7 @@ class KtorHttpServerService : LifecycleService() {
                     val params = call.receive<Map<String, Int>>()
                     val quality = params["quality"] ?: 85
                     streamStateHolder.setJpegQuality(quality)
+                    settingsRepository.updateJpegQuality(quality)
                     call.respond(ApiResponse(true, "JPEG quality updated to $quality"))
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.BadRequest, ApiResponse(false, "Invalid JPEG quality: ${e.message}"))
@@ -478,6 +493,7 @@ class KtorHttpServerService : LifecycleService() {
                     val params = call.receive<Map<String, Boolean>>()
                     val enabled = params["enabled"] ?: false
                     streamStateHolder.setUseAvc(enabled)
+                    settingsRepository.updateUseAvc(enabled)
                     call.respond(ApiResponse(true, "useAvc set to $enabled"))
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.BadRequest, ApiResponse(false, "Invalid use-avc value: ${e.message}"))
@@ -489,6 +505,7 @@ class KtorHttpServerService : LifecycleService() {
                     val params = call.receive<Map<String, Int>>()
                     val bitrate = params["bitrate"] ?: -1
                     streamStateHolder.setAvcBitrate(bitrate)
+                    settingsRepository.updateAvcBitrate(bitrate.takeIf { it > 0 })
                     call.respond(ApiResponse(true, "AVC bitrate set to $bitrate"))
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.BadRequest, ApiResponse(false, "Invalid avc bitrate: ${e.message}"))

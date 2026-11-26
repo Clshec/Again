@@ -9,5 +9,6 @@ data class AppSettings(
     val streamingPort: Int = 4747,
     val camera: String = "back",
     val isStreaming: Boolean = false,
-    val useScreenCapture: Boolean = false
+    val useScreenCapture: Boolean = false,
+    val httpPort: Int = 8080
 )

@@ -48,6 +48,11 @@ class PreferencesManager(private val context: Context) {
         val CAMERA_AWB_LOCK = booleanPreferencesKey("camera_awb_lock")
         val CAMERA_ANTI_BANDING = intPreferencesKey("camera_anti_banding")
         val CAMERA_ZOOM = floatPreferencesKey("camera_zoom")
+        val CAMERA_EV = intPreferencesKey("camera_ev")
+        val CAMERA_ISO_LOCK = booleanPreferencesKey("camera_iso_lock")
+        val CAMERA_SHUTTER_LOCK = booleanPreferencesKey("camera_shutter_lock")
+        val CAMERA_ZOOM_LOCK = booleanPreferencesKey("camera_zoom_lock")
+        val CAMERA_GRID = booleanPreferencesKey("camera_grid")
     }
 
     /**
@@ -65,6 +70,7 @@ class PreferencesManager(private val context: Context) {
             AppSettings(
                 host = preferences[PreferenceKeys.HOST] ?: "0.0.0.0",
                 streamingPort = preferences[PreferenceKeys.STREAMING_PORT] ?: 4747,
+                httpPort = preferences[PreferenceKeys.HTTP_PORT] ?: 8080,
                 camera = preferences[PreferenceKeys.CAMERA] ?: "back",
                 isStreaming = preferences[PreferenceKeys.IS_STREAMING] ?: false,
                 useScreenCapture = preferences[PreferenceKeys.USE_SCREEN_CAPTURE] ?: false
@@ -108,7 +114,12 @@ class PreferencesManager(private val context: Context) {
                 whiteBalance = preferences[PreferenceKeys.CAMERA_WHITE_BALANCE] ?: 1,
                 whiteBalanceLocked = preferences[PreferenceKeys.CAMERA_AWB_LOCK] ?: false,
                 antiBanding = preferences[PreferenceKeys.CAMERA_ANTI_BANDING] ?: 3,
-                zoom = preferences[PreferenceKeys.CAMERA_ZOOM] ?: 0f
+                zoom = preferences[PreferenceKeys.CAMERA_ZOOM] ?: 0f,
+                exposure = preferences[PreferenceKeys.CAMERA_EV] ?: 0,
+                isoLocked = preferences[PreferenceKeys.CAMERA_ISO_LOCK] ?: false,
+                shutterLocked = preferences[PreferenceKeys.CAMERA_SHUTTER_LOCK] ?: false,
+                zoomLocked = preferences[PreferenceKeys.CAMERA_ZOOM_LOCK] ?: false,
+                gridEnabled = preferences[PreferenceKeys.CAMERA_GRID] ?: false
             )
         }
 
@@ -124,6 +135,11 @@ class PreferencesManager(private val context: Context) {
             preferences[PreferenceKeys.CAMERA_AWB_LOCK] = value.whiteBalanceLocked
             preferences[PreferenceKeys.CAMERA_ANTI_BANDING] = value.antiBanding
             preferences[PreferenceKeys.CAMERA_ZOOM] = value.zoom
+            preferences[PreferenceKeys.CAMERA_EV] = value.exposure
+            preferences[PreferenceKeys.CAMERA_ISO_LOCK] = value.isoLocked
+            preferences[PreferenceKeys.CAMERA_SHUTTER_LOCK] = value.shutterLocked
+            preferences[PreferenceKeys.CAMERA_ZOOM_LOCK] = value.zoomLocked
+            preferences[PreferenceKeys.CAMERA_GRID] = value.gridEnabled
         }
     }
 
@@ -137,6 +153,10 @@ class PreferencesManager(private val context: Context) {
         dataStore.edit { preferences ->
             preferences[PreferenceKeys.STREAMING_PORT] = port
         }
+    }
+
+    suspend fun updateHttpPort(port: Int) {
+        dataStore.edit { preferences -> preferences[PreferenceKeys.HTTP_PORT] = port }
     }
 
     suspend fun updateCamera(camera: String) {
@@ -162,7 +182,8 @@ class PreferencesManager(private val context: Context) {
             preferences[PreferenceKeys.JPEG_QUALITY] = config.jpegQuality
             preferences[PreferenceKeys.FPS] = config.fps
             preferences[PreferenceKeys.USE_AVC] = config.useAvc
-            config.avcBitrate?.let { preferences[PreferenceKeys.AVC_BITRATE] = it }
+            if (config.avcBitrate != null) preferences[PreferenceKeys.AVC_BITRATE] = config.avcBitrate
+            else preferences.remove(PreferenceKeys.AVC_BITRATE)
         }
     }
 

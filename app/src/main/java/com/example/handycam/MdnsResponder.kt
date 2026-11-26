@@ -23,6 +23,7 @@ private const val SERVICE_TYPE = "_droidcamobs._tcp.local."
  */
 class MdnsResponder(private val context: Context, private val streamPort: Int) {
 
+    private val stableHostName = stableCameraHost(context) + "."
     private val deviceName = android.os.Build.MODEL.replace(" ", "_")
     @Volatile private var socket: MulticastSocket? = null
     private var thread: Thread? = null
@@ -110,12 +111,19 @@ class MdnsResponder(private val context: Context, private val streamPort: Int) {
         if (flags and 0x8000 != 0) return // skip responses
         val qdCount = ((data[4].toInt() and 0xFF) shl 8) or (data[5].toInt() and 0xFF)
         if (qdCount == 0) return
+        if (qdCount > 64) return
         var offset = 12
         for (i in 0 until qdCount) {
             val (name, newOffset) = parseName(data, len, offset)
+            if (name.isEmpty()) return
             if (newOffset + 4 > len) return
             val qtype = ((data[newOffset].toInt() and 0xFF) shl 8) or (data[newOffset + 1].toInt() and 0xFF)
+            val qclass = ((data[newOffset + 2].toInt() and 0xFF) shl 8) or (data[newOffset + 3].toInt() and 0xFF)
             offset = newOffset + 4
+            if ((qtype == 1 || qtype == 255) && (qclass and 0x7fff) == 1 && name.equals(stableHostName, ignoreCase = true)) {
+                sendHostResponse(id, qclass, sock, packet)
+                continue
+            }
             if ((qtype == 12 || qtype == 255) && name.equals(SERVICE_TYPE, ignoreCase = true)) {
                 Log.d(MDNS_TAG, "Query from ${packet.address.hostAddress} id=$id")
                 sendResponse(id, sock, packet)
@@ -124,25 +132,60 @@ class MdnsResponder(private val context: Context, private val streamPort: Int) {
         }
     }
 
-    private fun parseName(data: ByteArray, len: Int, start: Int): Pair<String, Int> {
+    private fun parseName(data: ByteArray, len: Int, start: Int, depth: Int = 0): Pair<String, Int> {
+        if (depth > 16 || start !in 0 until len) return Pair("", len)
         val sb = StringBuilder()
         var i = start
         while (i < len) {
             val labelLen = data[i].toInt() and 0xFF
             if (labelLen == 0) { i++; break }
             if (labelLen and 0xC0 == 0xC0) {
+                if (i + 1 >= len) return Pair("", len)
                 val ptr = ((labelLen and 0x3F) shl 8) or (data[i + 1].toInt() and 0xFF)
-                val (name, _) = parseName(data, len, ptr)
+                val (name, _) = parseName(data, len, ptr, depth + 1)
+                if (name.isEmpty()) return Pair("", len)
                 if (sb.isNotEmpty()) sb.append('.')
                 sb.append(name)
                 i += 2; break
             }
             if (sb.isNotEmpty()) sb.append('.')
+            if (labelLen > 63 || i + 1 + labelLen > len) return Pair("", len)
             sb.append(String(data, i + 1, labelLen))
             i += labelLen + 1
         }
         if (sb.isNotEmpty() && sb.last() != '.') sb.append('.')
         return Pair(sb.toString(), i)
+    }
+
+    private fun sendHostResponse(queryId: Int, qclass: Int, sock: MulticastSocket, replyTo: DatagramPacket) {
+        val address = getWifiInterface()?.inetAddresses?.toList()
+            ?.filterIsInstance<java.net.Inet4Address>()
+            ?.firstOrNull { !it.isLoopbackAddress && !it.isLinkLocalAddress } ?: return
+        val legacy = replyTo.port != MDNS_PORT
+        val unicast = legacy || (qclass and 0x8000) != 0
+        val out = ByteArrayOutputStream()
+        val dos = DataOutputStream(out)
+        dos.writeShort(if (legacy) queryId else 0)
+        dos.writeShort(0x8400)
+        dos.writeShort(if (legacy) 1 else 0)
+        dos.writeShort(1)
+        dos.writeShort(0)
+        dos.writeShort(0)
+        if (legacy) {
+            writeName(dos, stableHostName)
+            dos.writeShort(1)
+            dos.writeShort(1)
+        }
+        writeName(dos, stableHostName)
+        dos.writeShort(1)
+        dos.writeShort(if (legacy) 1 else 0x8001)
+        dos.writeInt(if (legacy) 10 else 30)
+        dos.writeShort(4)
+        dos.write(address.address)
+        val bytes = out.toByteArray()
+        val destination = if (unicast) replyTo.address else InetAddress.getByName(MDNS_ADDR)
+        val port = if (unicast) replyTo.port else MDNS_PORT
+        sock.send(DatagramPacket(bytes, bytes.size, destination, port))
     }
 
     private fun sendResponse(queryId: Int, sock: MulticastSocket, replyTo: DatagramPacket) {

@@ -62,4 +62,66 @@ class CameraControlPersistenceTest {
             writes.close()
         }
     }
+    @Test
+    fun restoresAllCommittedControlsAndDoesNotTurnOnTorch() {
+        val state = StreamStateHolder()
+        val saved = CameraControlSettings(
+            manualExposureEnabled = true, iso = 640, shutterSpeedNs = 10_000_000L,
+            autoExposure = false, autoFocus = false, focus = 35,
+            whiteBalance = 5, antiBanding = 1, zoom = 0.4f,
+            exposure = -2, isoLocked = true, shutterLocked = true,
+            zoomLocked = true, gridEnabled = true
+        )
+        restoreCameraControls(state, saved)
+        assertEquals(-2, state.exposure.value)
+        assertTrue(state.isoLocked.value)
+        assertTrue(state.shutterLocked.value)
+        assertTrue(state.zoomLocked.value)
+        assertTrue(state.gridEnabled.value)
+        assertEquals(35, state.focus.value)
+        assertEquals(5, state.whiteBalance.value)
+        assertEquals(1, state.antiBanding.value)
+        assertEquals(0.4f, state.zoom.value, 0.001f)
+        assertFalse(state.torchEnabled.value)
+    }
+
+    @Test
+    fun observesAdditionalSettingsWithoutActivity() = runBlocking {
+        val state = StreamStateHolder()
+        val initial = CameraControlSettings()
+        val writes = Channel<CameraControlSettings>(Channel.UNLIMITED)
+        val job = launch { observeCameraControls(state, initial) { writes.send(it) } }
+        try {
+            state.setExposure(2)
+            state.setIsoLocked(true)
+            state.setShutterLocked(true)
+            state.setZoomLocked(true)
+            state.setGridEnabled(true)
+            val latest = withTimeout(5_000L) {
+                var value = writes.receive()
+                while (value.exposure != 2 || !value.isoLocked || !value.shutterLocked ||
+                    !value.zoomLocked || !value.gridEnabled) value = writes.receive()
+                value
+            }
+            val reopened = StreamStateHolder()
+            restoreCameraControls(reopened, latest)
+            assertEquals(2, reopened.exposure.value)
+            assertTrue(reopened.isoLocked.value)
+            assertTrue(reopened.shutterLocked.value)
+            assertTrue(reopened.zoomLocked.value)
+            assertTrue(reopened.gridEnabled.value)
+        } finally {
+            job.cancelAndJoin()
+            writes.close()
+        }
+    }
+
+    @Test
+    fun stableHostDoesNotDependOnNetworkAddress() {
+        val first = stableCameraHostForId("example-phone-one")
+        assertEquals(first, stableCameraHostForId("example-phone-one"))
+        assertNotEquals(first, stableCameraHostForId("example-phone-two"))
+        assertTrue(first.matches(Regex("handycam-[0-9a-f]{8}[.]local")))
+    }
+
 }

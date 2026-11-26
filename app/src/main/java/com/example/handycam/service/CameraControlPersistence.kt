@@ -41,6 +41,11 @@ internal fun restoreCameraControls(streamStateHolder: StreamStateHolder, saved: 
     streamStateHolder.setWhiteBalanceLocked(saved.whiteBalanceLocked && saved.whiteBalance == 1)
     streamStateHolder.setAntiBanding(saved.antiBanding)
     streamStateHolder.setZoom(saved.zoom)
+    streamStateHolder.setExposure(saved.exposure)
+    streamStateHolder.setIsoLocked(saved.isoLocked)
+    streamStateHolder.setShutterLocked(saved.shutterLocked)
+    streamStateHolder.setZoomLocked(saved.zoomLocked)
+    streamStateHolder.setGridEnabled(saved.gridEnabled)
     streamStateHolder.setManualExposureEnabled(saved.manualExposureEnabled)
 }
 
@@ -60,7 +65,12 @@ internal suspend fun observeCameraControls(
         streamStateHolder.whiteBalance,
         streamStateHolder.whiteBalanceLocked,
         streamStateHolder.antiBanding,
-        streamStateHolder.zoom
+        streamStateHolder.zoom,
+        streamStateHolder.exposure,
+        streamStateHolder.isoLocked,
+        streamStateHolder.shutterLocked,
+        streamStateHolder.zoomLocked,
+        streamStateHolder.gridEnabled
     )
     combine(flows) { states: Array<Any> ->
         CameraControlSettings(
@@ -73,7 +83,12 @@ internal suspend fun observeCameraControls(
             whiteBalance = states[6] as Int,
             whiteBalanceLocked = states[7] as Boolean,
             antiBanding = states[8] as Int,
-            zoom = states[9] as Float
+            zoom = states[9] as Float,
+            exposure = states[10] as Int,
+            isoLocked = states[11] as Boolean,
+            shutterLocked = states[12] as Boolean,
+            zoomLocked = states[13] as Boolean,
+            gridEnabled = states[14] as Boolean
         )
     }.distinctUntilChanged().collect { current ->
         if (current != lastSaved) {
