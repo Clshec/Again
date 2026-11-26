@@ -47,6 +47,8 @@ fun MainScreen(
 ) {
     val isStreaming by viewModel.isStreaming.collectAsState()
     val cameraSettingsReady by cameraControlsViewModel.settingsReady.collectAsState()
+    val streamSettingsReady by viewModel.settingsReady.collectAsState()
+    val savedHttpPort by viewModel.streamStateHolder.httpPort.collectAsState()
     val httpsRunning by viewModel.httpsRunning.collectAsState()
     val cameras by viewModel.availableCameras.collectAsState()
     val isScreenStreaming by viewModel.streamStateHolder.useScreenCapture.collectAsState()
@@ -70,7 +72,7 @@ fun MainScreen(
     val matchingPreset = remember(width, height) {
         RESOLUTION_PRESETS.firstOrNull { it.label != "Custom" && it.width == width && it.height == height }
     }
-    var selectedPreset by remember { mutableStateOf(matchingPreset ?: RESOLUTION_PRESETS.last()) }
+    var selectedPreset by remember(streamSettingsReady) { mutableStateOf(matchingPreset ?: RESOLUTION_PRESETS.last()) }
     var customWidth by remember(width) { mutableStateOf(width.toString()) }
     var customHeight by remember(height) { mutableStateOf(height.toString()) }
     val selectedCamera = remember(cameras, selectedCameraId) {
@@ -81,7 +83,7 @@ fun MainScreen(
     var avcBitrate by remember(avcBitrateValue) {
         mutableStateOf(if (avcBitrateValue > 0) (avcBitrateValue / 1_000_000f).toString() else "")
     }
-    var httpPort by remember { mutableStateOf("8080") }
+    var httpPort by remember(savedHttpPort) { mutableStateOf(savedHttpPort.toString()) }
 
     var cameraDropdownOpen by remember { mutableStateOf(false) }
     val isScreenSource = isScreenStreaming
@@ -91,15 +93,12 @@ fun MainScreen(
         }
     }
 
-    // Capture resolved (w, h) once so the screen capture launcher can also use it
-    val resolvedWidth by remember { derivedStateOf {
-        if (selectedPreset.label != "Custom") selectedPreset.width
-        else customWidth.toIntOrNull() ?: 1920
-    } }
-    val resolvedHeight by remember { derivedStateOf {
-        if (selectedPreset.label != "Custom") selectedPreset.height
-        else customHeight.toIntOrNull() ?: 1080
-    } }
+    val resolvedWidth = if (selectedPreset.label != "Custom") selectedPreset.width
+        else customWidth.toIntOrNull() ?: width
+    val resolvedHeight = if (selectedPreset.label != "Custom") selectedPreset.height
+        else customHeight.toIntOrNull() ?: height
+    val validPorts = port.toIntOrNull()?.let { it in 1..65535 && it != savedHttpPort } == true &&
+        httpPort.toIntOrNull()?.let { it in 1..65535 && it != port.toIntOrNull() } == true
 
     // Launcher for MediaProjection consent dialog
     val screenCaptureLauncher = rememberLauncherForActivityResult(
@@ -134,12 +133,12 @@ fun MainScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("HandyCam", fontWeight = FontWeight.SemiBold) },
+                title = { Text("HandyCam", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) },
                 actions = {
                     if (isStreaming) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(end = 16.dp)
+                            modifier = Modifier.padding(end = 10.dp)
                         ) {
                             Icon(
                                 Icons.Filled.Circle,
@@ -160,238 +159,9 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // Primary exposure controls are always visible at the top.
-            CameraControlsSection(
-                viewModel = cameraControlsViewModel,
-                cameraStreamActive = !isScreenSource,
-                exposureOnly = true
-            )
-
-            // ── Connection ────────────────────────────────────────────
-            SectionCard(title = "Connection") {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(2f)) {
-                        Text("IP Address", style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(4.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(host, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                            val clipboard = LocalClipboardManager.current
-                            IconButton(onClick = { clipboard.setText(AnnotatedString(host)) },
-                                modifier = Modifier.size(32.dp)) {
-                                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy IP",
-                                    modifier = Modifier.size(16.dp))
-                            }
-                        }
-                        Text("Your phone's Wi-Fi IP", style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    OutlinedTextField(
-                        value = port,
-                        onValueChange = {
-                            port = it
-                            val parsedPort = it.toIntOrNull()
-                            if (parsedPort != null) viewModel.updateStreamingPort(parsedPort)
-                        },
-                        label = { Text("Port") },
-                        supportingText = { Text("4747") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        enabled = !isStreaming
-                    )
-                }
-            }
-
-            // ── Video ─────────────────────────────────────────────────
-            SectionCard(title = "Video") {
-                // Resolution presets
-                Text("Resolution", style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    RESOLUTION_PRESETS.forEachIndexed { i, preset ->
-                        SegmentedButton(
-                            shape = SegmentedButtonDefaults.itemShape(i, RESOLUTION_PRESETS.size),
-                            selected = selectedPreset == preset,
-                            onClick = {
-                                if (!isStreaming) {
-                                    selectedPreset = preset
-                                    if (preset.label != "Custom") {
-                                        viewModel.updateResolution(preset.width, preset.height)
-                                    } else {
-                                        customWidth = width.toString()
-                                        customHeight = height.toString()
-                                    }
-                                }
-                            },
-                            label = { Text(preset.label) }
-                        )
-                    }
-                }
-                if (selectedPreset.label == "Custom") {
-                    Spacer(Modifier.height(4.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = customWidth,
-                            onValueChange = {
-                                customWidth = it
-                                val parsedWidth = it.toIntOrNull()
-                                val parsedHeight = customHeight.toIntOrNull()
-                                if (parsedWidth != null && parsedHeight != null) {
-                                    viewModel.updateResolution(parsedWidth, parsedHeight)
-                                }
-                            },
-                            label = { Text("Width") }, modifier = Modifier.weight(1f),
-                            singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            enabled = !isStreaming
-                        )
-                        OutlinedTextField(
-                            value = customHeight,
-                            onValueChange = {
-                                customHeight = it
-                                val parsedWidth = customWidth.toIntOrNull()
-                                val parsedHeight = it.toIntOrNull()
-                                if (parsedWidth != null && parsedHeight != null) {
-                                    viewModel.updateResolution(parsedWidth, parsedHeight)
-                                }
-                            },
-                            label = { Text("Height") }, modifier = Modifier.weight(1f),
-                            singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            enabled = !isStreaming
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(4.dp))
-
-                // FPS
-                Text("Frame rate", style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    FPS_OPTIONS.forEachIndexed { i, fps ->
-                        SegmentedButton(
-                            shape = SegmentedButtonDefaults.itemShape(i, FPS_OPTIONS.size),
-                            selected = selectedFps == fps,
-                            onClick = { if (!isStreaming) viewModel.updateFps(fps.toInt()) },
-                            label = { Text("${fps}fps") }
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(4.dp))
-
-                // Source type: Camera or Screen
-                Text("Source", style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    SegmentedButton(
-                        shape = SegmentedButtonDefaults.itemShape(0, 2),
-                        selected = !isScreenSource,
-                        onClick = {
-                            if (!isStreaming) {
-                                viewModel.updateUseScreenCapture(false)
-                                if (selectedCamera == null) {
-                                    cameras.firstOrNull()?.let { viewModel.updateCamera(it.id) }
-                                }
-                            }
-                        },
-                        label = { Text("Camera") }
-                    )
-                    SegmentedButton(
-                        shape = SegmentedButtonDefaults.itemShape(1, 2),
-                        selected = isScreenSource,
-                        onClick = { if (!isStreaming) viewModel.updateUseScreenCapture(true) },
-                        label = { Text("Screen") }
-                    )
-                }
-
-                // Camera picker — only shown in camera mode
-                AnimatedVisibility(visible = !isScreenSource) {
-                    ExposedDropdownMenuBox(
-                        expanded = cameraDropdownOpen,
-                        onExpandedChange = { if (!isStreaming) cameraDropdownOpen = it },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        OutlinedTextField(
-                            value = selectedCamera?.displayName ?: "Select camera",
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Camera") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = cameraDropdownOpen) },
-                            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable, true).fillMaxWidth(),
-                            enabled = !isStreaming
-                        )
-                        ExposedDropdownMenu(expanded = cameraDropdownOpen, onDismissRequest = { cameraDropdownOpen = false }) {
-                            cameras.forEach { cam ->
-                                DropdownMenuItem(
-                                    text = { Text(cam.displayName) },
-                                    onClick = {
-                                        viewModel.updateCamera(cam.id)
-                                        cameraDropdownOpen = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ── Codec ─────────────────────────────────────────────────
-            SectionCard(title = "Codec") {
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    SegmentedButton(
-                        shape = SegmentedButtonDefaults.itemShape(0, 2),
-                        selected = !useAvc,
-                        onClick = { if (!isStreaming) viewModel.updateUseAvc(false) },
-                        label = { Text("MJPEG") }
-                    )
-                    SegmentedButton(
-                        shape = SegmentedButtonDefaults.itemShape(1, 2),
-                        selected = useAvc,
-                        onClick = { if (!isStreaming) viewModel.updateUseAvc(true) },
-                        label = { Text("H.264 (AVC)") }
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                if (!useAvc) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "Quality: ${jpegQuality.toInt()}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.width(96.dp)
-                        )
-                        Slider(
-                            value = jpegQuality,
-                            onValueChange = {
-                                if (!isStreaming) {
-                                    jpegQuality = it
-                                    viewModel.updateJpegQuality(it.toInt())
-                                }
-                            },
-                            valueRange = 10f..100f,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                } else {
-                    OutlinedTextField(
-                        value = avcBitrate,
-                        onValueChange = {
-                            avcBitrate = it
-                            val parsed = it.toFloatOrNull()?.let { value -> (value * 1_000_000).toInt() }
-                            viewModel.updateAvcBitrate(parsed)
-                        },
-                        label = { Text("Bitrate (Mbps)") },
-                        supportingText = { Text("Leave blank for auto") },
-                        modifier = Modifier.fillMaxWidth(), singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        enabled = !isStreaming
-                    )
-                }
-            }
-
             // ── Start / Stop ──────────────────────────────────────────
             Button(
                 onClick = {
@@ -414,8 +184,9 @@ fun MainScreen(
                         )
                     }
                 },
-                enabled = isStreaming || cameraSettingsReady,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
+                enabled = isStreaming || (cameraSettingsReady && streamSettingsReady && validPorts),
+                modifier = Modifier.fillMaxWidth().height(44.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                 colors = if (isStreaming) ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error
                 ) else ButtonDefaults.buttonColors()
@@ -425,20 +196,257 @@ fun MainScreen(
                     contentDescription = null, modifier = Modifier.size(18.dp)
                 )
                 Spacer(Modifier.width(8.dp))
-                Text(if (isStreaming) "Stop Streaming" else "Start Streaming",
+                Text(if (isStreaming) "Stop Streaming" else if (isScreenSource) "Start Screen Streaming" else "Start Camera & Streaming",
                     style = MaterialTheme.typography.labelLarge)
             }
+
+            // Primary exposure controls are always visible at the top.
+            CameraControlsSection(
+                viewModel = cameraControlsViewModel,
+                cameraStreamActive = !isScreenSource,
+                exposureOnly = true
+            )
 
             AnimatedVisibility(visible = isStreaming && !isScreenStreaming) {
                 OutlinedButton(
                     onClick = onNavigateToCameraControl,
-                    modifier = Modifier.fillMaxWidth()
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().height(44.dp)
                 ) {
                     Text("Open Preview & Controls")
                 }
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            // ── Connection ────────────────────────────────────────────
+            SectionCard(title = "Connection") {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(2f)) {
+                        Text("IP Address", style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(2.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(host, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                            val clipboard = LocalClipboardManager.current
+                            IconButton(onClick = { clipboard.setText(AnnotatedString(host)) },
+                                modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy IP",
+                                    modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        Text("Your phone's Wi-Fi IP", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    OutlinedTextField(
+                        value = port,
+                        onValueChange = {
+                            port = it
+                            val parsedPort = it.toIntOrNull()
+                            if (parsedPort != null) viewModel.updateStreamingPort(parsedPort)
+                        },
+                        label = { Text("Port") },
+                        modifier = Modifier.weight(1f).height(54.dp),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        enabled = !isStreaming
+                    )
+                }
+                if (isStreaming) Text("Stable LAN: ${viewModel.stableHost}:$streamingPort",
+                    style = MaterialTheme.typography.bodySmall)
+
+            }
+
+            // ── Video ─────────────────────────────────────────────────
+            SectionCard(title = "Video") {
+                // Resolution presets
+                Text("Resolution", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().height(44.dp)) {
+                    RESOLUTION_PRESETS.forEachIndexed { i, preset ->
+                        SegmentedButton(
+                            modifier = Modifier.height(44.dp),
+                            shape = SegmentedButtonDefaults.itemShape(i, RESOLUTION_PRESETS.size),
+                            selected = selectedPreset == preset,
+                            onClick = {
+                                if (!isStreaming) {
+                                    selectedPreset = preset
+                                    if (preset.label != "Custom") {
+                                        viewModel.updateResolution(preset.width, preset.height)
+                                    } else {
+                                        customWidth = width.toString()
+                                        customHeight = height.toString()
+                                    }
+                                }
+                            },
+                            label = { Text(preset.label, style = MaterialTheme.typography.labelSmall) }
+                        )
+                    }
+                }
+                if (selectedPreset.label == "Custom") {
+                    Spacer(Modifier.height(2.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedTextField(
+                            value = customWidth,
+                            onValueChange = {
+                                customWidth = it
+                                val parsedWidth = it.toIntOrNull()
+                                val parsedHeight = customHeight.toIntOrNull()
+                                if (parsedWidth != null && parsedHeight != null) {
+                                    viewModel.updateResolution(parsedWidth, parsedHeight)
+                                }
+                            },
+                            label = { Text("Width") }, modifier = Modifier.weight(1f).height(54.dp),
+                            singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            enabled = !isStreaming
+                        )
+                        OutlinedTextField(
+                            value = customHeight,
+                            onValueChange = {
+                                customHeight = it
+                                val parsedWidth = customWidth.toIntOrNull()
+                                val parsedHeight = it.toIntOrNull()
+                                if (parsedWidth != null && parsedHeight != null) {
+                                    viewModel.updateResolution(parsedWidth, parsedHeight)
+                                }
+                            },
+                            label = { Text("Height") }, modifier = Modifier.weight(1f).height(54.dp),
+                            singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            enabled = !isStreaming
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(2.dp))
+
+                // FPS
+                Text("Frame rate", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().height(44.dp)) {
+                    FPS_OPTIONS.forEachIndexed { i, fps ->
+                        SegmentedButton(
+                            modifier = Modifier.height(44.dp),
+                            shape = SegmentedButtonDefaults.itemShape(i, FPS_OPTIONS.size),
+                            selected = selectedFps == fps,
+                            onClick = { if (!isStreaming) viewModel.updateFps(fps.toInt()) },
+                            label = { Text("${fps}fps") }
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(2.dp))
+
+                // Source type: Camera or Screen
+                Text("Source", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().height(44.dp)) {
+                    SegmentedButton(
+                        modifier = Modifier.height(44.dp),
+                        shape = SegmentedButtonDefaults.itemShape(0, 2),
+                        selected = !isScreenSource,
+                        onClick = {
+                            if (!isStreaming) {
+                                viewModel.updateUseScreenCapture(false)
+                                if (selectedCamera == null) {
+                                    cameras.firstOrNull()?.let { viewModel.updateCamera(it.id) }
+                                }
+                            }
+                        },
+                        label = { Text("Camera") }
+                    )
+                    SegmentedButton(
+                        modifier = Modifier.height(44.dp),
+                        shape = SegmentedButtonDefaults.itemShape(1, 2),
+                        selected = isScreenSource,
+                        onClick = { if (!isStreaming) viewModel.updateUseScreenCapture(true) },
+                        label = { Text("Screen") }
+                    )
+                }
+
+                // Camera picker — only shown in camera mode
+                AnimatedVisibility(visible = !isScreenSource) {
+                    ExposedDropdownMenuBox(
+                        expanded = cameraDropdownOpen,
+                        onExpandedChange = { if (!isStreaming) cameraDropdownOpen = it },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        OutlinedTextField(
+                            value = selectedCamera?.displayName ?: "Select camera",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Camera") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = cameraDropdownOpen) },
+                            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable, true).fillMaxWidth().height(54.dp),
+                            enabled = !isStreaming
+                        )
+                        ExposedDropdownMenu(expanded = cameraDropdownOpen, onDismissRequest = { cameraDropdownOpen = false }) {
+                            cameras.forEach { cam ->
+                                DropdownMenuItem(
+                                    text = { Text(cam.displayName) },
+                                    onClick = {
+                                        viewModel.updateCamera(cam.id)
+                                        cameraDropdownOpen = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Codec ─────────────────────────────────────────────────
+            SectionCard(title = "Codec") {
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().height(44.dp)) {
+                    SegmentedButton(
+                        modifier = Modifier.height(44.dp),
+                        shape = SegmentedButtonDefaults.itemShape(0, 2),
+                        selected = !useAvc,
+                        onClick = { if (!isStreaming) viewModel.updateUseAvc(false) },
+                        label = { Text("MJPEG") }
+                    )
+                    SegmentedButton(
+                        modifier = Modifier.height(44.dp),
+                        shape = SegmentedButtonDefaults.itemShape(1, 2),
+                        selected = useAvc,
+                        onClick = { if (!isStreaming) viewModel.updateUseAvc(true) },
+                        label = { Text("H.264 (AVC)") }
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
+                if (!useAvc) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Quality: ${jpegQuality.toInt()}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.width(96.dp)
+                        )
+                        Slider(
+                            value = jpegQuality,
+                            onValueChange = {
+                                if (!isStreaming) {
+                                    jpegQuality = it
+                                    viewModel.updateJpegQuality(it.toInt())
+                                }
+                            },
+                            valueRange = 10f..100f,
+                            modifier = Modifier.weight(1f).height(44.dp)
+                        )
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = avcBitrate,
+                        onValueChange = {
+                            avcBitrate = it
+                            val parsed = it.toFloatOrNull()?.let { value -> (value * 1_000_000).toInt() }
+                            viewModel.updateAvcBitrate(parsed)
+                        },
+                        label = { Text("Bitrate (Mbps, blank = auto)") },
+                        modifier = Modifier.fillMaxWidth().height(54.dp), singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        enabled = !isStreaming
+                    )
+                }
+            }
 
             // ── Native controls on the home screen ────────────────────
             CameraControlsSection(
@@ -453,24 +461,31 @@ fun MainScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(2.dp))
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedTextField(
-                        value = httpPort, onValueChange = { httpPort = it },
+                        value = httpPort,
+                        onValueChange = { value ->
+                            httpPort = value
+                            value.toIntOrNull()?.let(viewModel::updateHttpPort)
+                        },
+                        isError = httpPort.toIntOrNull()?.let { it !in 1..65535 || it == streamingPort } != false,
                         label = { Text("Port") },
-                        modifier = Modifier.width(120.dp), singleLine = true,
+                        modifier = Modifier.width(96.dp).height(54.dp), singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         enabled = !httpsRunning
                     )
                     Button(
                         onClick = {
                             if (httpsRunning) viewModel.stopHttpsServer()
-                            else viewModel.startHttpsServer(httpPort.toIntOrNull() ?: 8443)
+                            else viewModel.startHttpsServer(savedHttpPort)
                         },
-                        modifier = Modifier.weight(1f),
+                        enabled = httpsRunning || (streamSettingsReady && validPorts),
+                        modifier = Modifier.weight(1f).height(44.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                         colors = if (httpsRunning) ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error
                         ) else ButtonDefaults.buttonColors()
@@ -479,9 +494,11 @@ fun MainScreen(
                     }
                 }
                 if (httpsRunning) {
-                    val serverUrl = "http://$host:$httpPort/camera"
+                    if (isStreaming) Text("Stable LAN: http://${viewModel.stableHost}:$savedHttpPort/camera",
+                        style = MaterialTheme.typography.bodySmall)
+                    val serverUrl = "http://$host:$savedHttpPort/camera"
                     val clipboard = LocalClipboardManager.current
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(2.dp))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -494,7 +511,7 @@ fun MainScreen(
                         )
                         IconButton(
                             onClick = { clipboard.setText(AnnotatedString(serverUrl)) },
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(36.dp)
                         ) {
                             Icon(
                                 Icons.Filled.ContentCopy,
@@ -506,7 +523,7 @@ fun MainScreen(
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(2.dp))
         }
     }
 }
@@ -514,7 +531,7 @@ fun MainScreen(
 @Composable
 private fun SectionCard(title: String, content: @Composable ColumnScope.() -> Unit) {
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             content()
         }

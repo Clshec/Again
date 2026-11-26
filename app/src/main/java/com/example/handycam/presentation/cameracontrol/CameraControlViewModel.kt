@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.handycam.StreamService
 import com.example.handycam.data.model.CameraInfo
 import com.example.handycam.service.CameraControlPersistence
+import com.example.handycam.data.repository.SettingsRepository
 import com.example.handycam.domain.usecase.GetAvailableCamerasUseCase
 import com.example.handycam.service.CameraStateHolder
 import com.example.handycam.service.StreamStateHolder
@@ -24,6 +25,7 @@ class CameraControlViewModel @Inject constructor(
     val cameraStateHolder: CameraStateHolder,
     private val getAvailableCamerasUseCase: GetAvailableCamerasUseCase,
     cameraControlPersistence: CameraControlPersistence,
+    private val settingsRepository: SettingsRepository,
 ) : ViewModel() {
 
     @Volatile
@@ -176,6 +178,7 @@ class CameraControlViewModel @Inject constructor(
 
     fun switchCamera(cameraId: String) {
         streamStateHolder.setCamera(cameraId)
+        viewModelScope.launch { settingsRepository.updateCamera(cameraId) }
         context.startService(Intent(context, StreamService::class.java).apply {
             action = "com.example.handycam.ACTION_SET_CAMERA"
             putExtra("camera", cameraId)

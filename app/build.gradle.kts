@@ -17,8 +17,8 @@ android {
         applicationId = "com.gumacu.handycam.manual"
         minSdk = 29
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.2.1-dev"
+        versionCode = 5
+        versionName = "1.2.2-dev"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

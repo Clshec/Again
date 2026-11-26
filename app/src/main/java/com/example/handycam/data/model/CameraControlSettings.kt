@@ -16,4 +16,9 @@ data class CameraControlSettings(
     val whiteBalanceLocked: Boolean = false,
     val antiBanding: Int = 3,
     val zoom: Float = 0f,
+    val exposure: Int = 0,
+    val isoLocked: Boolean = false,
+    val shutterLocked: Boolean = false,
+    val zoomLocked: Boolean = false,
+    val gridEnabled: Boolean = false,
 )
