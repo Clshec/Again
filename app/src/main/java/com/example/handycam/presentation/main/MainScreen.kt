@@ -1,6 +1,7 @@
 package com.example.handycam.presentation.main
 
 import androidx.compose.animation.AnimatedVisibility
+import com.example.handycam.presentation.cameracontrol.CameraControlViewModel
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -41,6 +42,7 @@ private val RESOLUTION_PRESETS = listOf(
 @Composable
 fun MainScreen(
     viewModel: MainViewModel,
+    cameraControlsViewModel: CameraControlViewModel,
     onNavigateToCameraControl: () -> Unit,
 ) {
     val isStreaming by viewModel.isStreaming.collectAsState()
@@ -428,6 +430,12 @@ fun MainScreen(
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            // ── Native controls on the home screen ────────────────────
+            CameraControlsSection(
+                viewModel = cameraControlsViewModel,
+                cameraStreamActive = !isScreenSource
+            )
 
             // ── HTTPS server ──────────────────────────────────────────
             SectionCard(title = "Web Control Server") {

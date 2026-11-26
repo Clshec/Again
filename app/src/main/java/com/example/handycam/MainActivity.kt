@@ -47,6 +47,7 @@ class MainActivity : ComponentActivity() {
                     composable("main") {
                         MainScreen(
                             viewModel = mainViewModel,
+                            cameraControlsViewModel = cameraControlViewModel,
                             onNavigateToCameraControl = { navController.navigate("camera_control") }
                         )
                     }

@@ -7,6 +7,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.handycam.StreamService
 import com.example.handycam.data.model.CameraInfo
+import com.example.handycam.data.model.CameraControlSettings
+import com.example.handycam.data.repository.SettingsRepository
 import com.example.handycam.domain.usecase.GetAvailableCamerasUseCase
 import com.example.handycam.service.CameraStateHolder
 import com.example.handycam.service.StreamStateHolder
@@ -16,12 +18,14 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 @HiltViewModel
 class CameraControlViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     val streamStateHolder: StreamStateHolder,
     val cameraStateHolder: CameraStateHolder,
     private val getAvailableCamerasUseCase: GetAvailableCamerasUseCase,
+    private val settingsRepository: SettingsRepository,
 ) : ViewModel() {
 
     @Volatile
@@ -34,6 +38,11 @@ class CameraControlViewModel @Inject constructor(
     val whiteBalance: StateFlow<Int> = streamStateHolder.whiteBalance
     val whiteBalanceLocked: StateFlow<Boolean> = streamStateHolder.whiteBalanceLocked
     val autoFocus: StateFlow<Boolean> = streamStateHolder.autoFocus
+    val focus: StateFlow<Int> = streamStateHolder.focus
+    val minFocusDistance: StateFlow<Float> = cameraStateHolder.minFocusDistance
+    val antiBanding: StateFlow<Int> = streamStateHolder.antiBanding
+    val availableAntiBandingModes: StateFlow<List<Int>> = cameraStateHolder.antiBandingModes
+    val availableWhiteBalanceModes: StateFlow<List<Int>> = cameraStateHolder.whiteBalanceModes
     val autoExposure: StateFlow<Boolean> = streamStateHolder.autoExposure
     val manualExposureEnabled: StateFlow<Boolean> = streamStateHolder.manualExposureEnabled
     val manualExposureSupported: StateFlow<Boolean> = cameraStateHolder.manualExposureSupported
@@ -61,6 +70,50 @@ class CameraControlViewModel @Inject constructor(
 
     init {
         viewModelScope.launch { _availableCameras.value = getAvailableCamerasUseCase() }
+        // Restore once; then observe ALL camera controls so browser-originated
+        // changes are saved too while this activity is alive.
+        viewModelScope.launch {
+            val saved = settingsRepository.cameraControls.first()
+            streamStateHolder.setManualExposureEnabled(saved.manualExposureEnabled)
+            streamStateHolder.setIso(saved.iso)
+            streamStateHolder.setShutterSpeedNs(saved.shutterSpeedNs)
+            streamStateHolder.setAutoExposure(saved.autoExposure)
+            streamStateHolder.setAutoFocus(saved.autoFocus)
+            streamStateHolder.setFocus(saved.focus)
+            streamStateHolder.setWhiteBalance(saved.whiteBalance)
+            streamStateHolder.setWhiteBalanceLocked(saved.whiteBalanceLocked && saved.whiteBalance == 1)
+            streamStateHolder.setAntiBanding(saved.antiBanding)
+            streamStateHolder.setZoom(saved.zoom)
+
+            val flows: List<Flow<Any>> = listOf(
+                streamStateHolder.manualExposureEnabled,
+                streamStateHolder.iso,
+                streamStateHolder.shutterSpeedNs,
+                streamStateHolder.autoExposure,
+                streamStateHolder.autoFocus,
+                streamStateHolder.focus,
+                streamStateHolder.whiteBalance,
+                streamStateHolder.whiteBalanceLocked,
+                streamStateHolder.antiBanding,
+                streamStateHolder.zoom
+            )
+            combine(flows) { states: Array<Any> ->
+                CameraControlSettings(
+                    manualExposureEnabled = states[0] as Boolean,
+                    iso = states[1] as Int,
+                    shutterSpeedNs = states[2] as Long,
+                    autoExposure = states[3] as Boolean,
+                    autoFocus = states[4] as Boolean,
+                    focus = states[5] as Int,
+                    whiteBalance = states[6] as Int,
+                    whiteBalanceLocked = states[7] as Boolean,
+                    antiBanding = states[8] as Int,
+                    zoom = states[9] as Float
+                )
+            }.drop(1).debounce(400).distinctUntilChanged().collect {
+                settingsRepository.updateCameraControls(it)
+            }
+        }
     }
 
     fun toggleTorch() {
@@ -88,12 +141,27 @@ class CameraControlViewModel @Inject constructor(
     }
 
     fun setWhiteBalance(awbMode: Int) {
-        if (streamStateHolder.whiteBalanceLocked.value) return
+        if (streamStateHolder.whiteBalanceLocked.value ||
+            awbMode !in cameraStateHolder.whiteBalanceModes.value) return
         streamStateHolder.setWhiteBalance(awbMode)
+        if (awbMode != 1) streamStateHolder.setWhiteBalanceLocked(false)
     }
 
     fun setWhiteBalanceLocked(locked: Boolean) {
+        if (locked && streamStateHolder.whiteBalance.value != 1) return
         streamStateHolder.setWhiteBalanceLocked(locked)
+    }
+
+    fun setAntiBanding(mode: Int) {
+        if (mode !in cameraStateHolder.antiBandingModes.value) return
+        streamStateHolder.setAntiBanding(mode)
+    }
+
+    fun setFocus(value: Int) {
+        if (!streamStateHolder.useAvc.value ||
+            cameraStateHolder.minFocusDistance.value <= 0f ||
+            streamStateHolder.autoFocus.value) return
+        streamStateHolder.setFocus(value.coerceIn(0, 100))
     }
 
     fun setAutoFocus(enabled: Boolean) {
@@ -110,7 +178,8 @@ class CameraControlViewModel @Inject constructor(
     }
 
     fun setIso(value: Int) {
-        if (streamStateHolder.isoLocked.value) return
+        if (streamStateHolder.isoLocked.value ||
+            value !in cameraStateHolder.isoMin.value..cameraStateHolder.isoMax.value) return
         streamStateHolder.setIso(value)
     }
 
@@ -119,7 +188,8 @@ class CameraControlViewModel @Inject constructor(
     }
 
     fun setShutterSpeedNs(value: Long) {
-        if (streamStateHolder.shutterLocked.value) return
+        if (streamStateHolder.shutterLocked.value ||
+            value !in cameraStateHolder.shutterMinNs.value..cameraStateHolder.shutterMaxNs.value) return
         streamStateHolder.setShutterSpeedNs(value)
     }
 
